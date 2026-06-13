@@ -245,6 +245,10 @@
       <button class="back" data-back>← choose a different path</button>
       <div class="guide-head"><h3>Standalone install</h3></div>
       <p class="p">Plug the device in over USB and flash it right here. Works in <b>Chrome</b> or <b>Edge</b> on desktop.</p>
+      <div data-whatsnew hidden style="margin:18px auto 0;max-width:560px;background:rgba(21,182,166,.07);border:1px solid rgba(21,182,166,.28);border-radius:12px;padding:13px 16px;text-align:left">
+        <div style="font-weight:600">What's new in <span data-wn-tag style="color:var(--teal)">the latest build</span></div>
+        <ul data-wn-notes style="margin:7px 0 0;padding-left:18px;font-size:.9rem;color:var(--mut);line-height:1.55"></ul>
+      </div>
       <div class="steps" style="margin-top:22px">
         <div class="step"><div class="num">1</div><div><h4>Connect over USB</h4><p>Plug your T-Deck or Heltec V4 into your computer with a data cable.</p></div></div>
         <div class="step"><div class="num">2</div><div><h4>Pick your board &amp; install</h4><p>Hit <b>Install</b> below, choose the serial port, and let it flash. It does a clean full install.</p></div></div>
@@ -252,9 +256,9 @@
       </div>
       <div class="boards">
         <div class="board"><h4>Heltec V4 + TFT</h4><p>ESP32-S3 with CHSC6x touch.</p>
-          <esp-web-install-button manifest="./manifest-heltec-v4-tft.json"></esp-web-install-button></div>
+          <esp-web-install-button manifest="https://firmware.wadamesh.com/latest/manifest-heltec-v4-tft.json"></esp-web-install-button></div>
         <div class="board"><h4>LilyGo T-Deck / Plus</h4><p>ESP32-S3 keyboard handheld.</p>
-          <esp-web-install-button manifest="./manifest-tdeck.json"></esp-web-install-button></div>
+          <esp-web-install-button manifest="https://firmware.wadamesh.com/latest/manifest-tdeck.json"></esp-web-install-button></div>
       </div>
       <div class="noserial">Your browser can't flash here — use <b>Chrome</b> or <b>Edge</b> on a desktop.</div>
       <p class="hint">T-Deck not detected? Hold the trackball while tapping reset to force download mode.</p>
@@ -378,6 +382,22 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
   const cbar = document.getElementById('cookiebar');
   try { if (!localStorage.getItem('wm-cookie-ack')) cbar.classList.add('show'); } catch(_) {}
   document.getElementById('cookieok').addEventListener('click', () => { cbar.classList.remove('show'); try { localStorage.setItem('wm-cookie-ack','1'); } catch(_) {} });
+
+  // Live release version + "what's new" — read from the firmware host so the
+  // flasher always reflects the current build (the release pipeline updates
+  // version.json; no site redeploy needed per release).
+  fetch('https://firmware.wadamesh.com/latest/version.json', {cache:'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(v => {
+      if (!v || !v.tag) return;
+      document.querySelectorAll('[data-wn-tag]').forEach(e => e.textContent = v.tag);
+      const notes = Array.isArray(v.notes) ? v.notes : [];
+      document.querySelectorAll('[data-wn-notes]').forEach(ul => {
+        ul.innerHTML = '';
+        notes.forEach(n => { const li = document.createElement('li'); li.textContent = n; ul.appendChild(li); });
+      });
+      if (notes.length) document.querySelectorAll('[data-whatsnew]').forEach(b => b.hidden = false);
+    }).catch(()=>{});
 
 </script>
 

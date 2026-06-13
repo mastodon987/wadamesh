@@ -87,6 +87,11 @@ jobs:
           done
           ls -la dist
 
+      - name: Web-flasher metadata (version.json + manifests, roll with release)
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: python3 scripts/build/gen-flasher-meta.py "$TAG" dist "release-notes/$TAG.txt"
+
       - name: Create / update the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,6 +122,7 @@ jobs:
             scp -i ~/.ssh/id_deploy "dist/$n.bin" "dist/$n-merged.bin" "$VPS:$REL/"
             scp -i ~/.ssh/id_deploy "dist/$n-merged.bin" "dist/$n.bin" "$VPS:$VPS_PATH/latest/"
           done
+          scp -i ~/.ssh/id_deploy dist/version.json dist/manifest-tdeck.json dist/manifest-heltec-v4-tft.json "$VPS:$VPS_PATH/latest/"
           $SSH "$VPS" "cd '$VPS_PATH/releases/TOUCH' && python3 -c \"import os,json; b=sorted(d for d in os.listdir('.') if d.startswith('beta_') and os.path.isdir(d)); open('index.json','w').write(json.dumps([{'name':x,'type':'dir'} for x in b], indent=2))\""
           rm -f ~/.ssh/id_deploy
           echo "Published $TAG to wadamesh.com"

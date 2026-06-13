@@ -49,6 +49,11 @@ print(json.dumps([{"name": b, "type": "dir"} for b in betas], indent=2))
 PY
 echo "listing: $(python3 -c 'import json,sys;print(", ".join(x["name"] for x in json.load(open(sys.argv[1]))))' "$REL/index.json")"
 
+# 3b. Web-flasher metadata (version.json + esp-web-tools manifests) — must roll
+#     with the release so the flasher shows the current version + notes, not a
+#     frozen one. Notes come from release-notes/<tag>.txt (one per line; optional).
+python3 "$ROOT/scripts/build/gen-flasher-meta.py" "$TAG" "$LATEST" "$ROOT/release-notes/$TAG.txt"
+
 # 4. Publish to the VPS (Cloudflare caches at the edge).
 if [ -n "$DEST" ]; then
   rsync -av "$OUT/" "$DEST:$DEST_PATH/"
