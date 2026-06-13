@@ -17,10 +17,8 @@ OUT="$ROOT/out/firmware"                       # local mirror of the VPS firmwar
 REL="$OUT/releases/TOUCH"
 DEST="${WADAMESH_VPS:-}"; DEST_PATH="${WADAMESH_VPS_PATH:-/srv/wadamesh/firmware}"
 
-declare -A ENVS=(
-  [heltec_v4_tft_companion_radio_usb_tcp_touch]=wadamesh-heltec-v4-tft
-  [LilyGo_TDeck_companion_radio_touch]=wadamesh-tdeck
-)
+# env:binname pairs — plain string form (works on macOS's bash 3.2; no associative arrays)
+ENVS="heltec_v4_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-tft LilyGo_TDeck_companion_radio_touch:wadamesh-tdeck"
 
 # 1. Pull the current published tree so the listing stays complete across tags.
 if [ -n "$DEST" ]; then
@@ -31,8 +29,8 @@ mkdir -p "$REL/$TAG"
 
 # 2. Build both boards (app + merged), tag + version embedded.
 export PLATFORMIO_BUILD_FLAGS="-DFIRMWARE_RELEASE_TAG='\"${TAG}\"' -DFIRMWARE_VERSION='\"wadamesh ${TAG}\"'"
-for env in "${!ENVS[@]}"; do
-  name="${ENVS[$env]}"
+for pair in $ENVS; do
+  env="${pair%%:*}"; name="${pair##*:}"
   "$PIO" run -t mergebin -e "$env"
   cp ".pio/build/$env/firmware.bin"        "$REL/$TAG/$name.bin"
   cp ".pio/build/$env/firmware-merged.bin" "$REL/$TAG/$name-merged.bin"
