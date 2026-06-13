@@ -346,7 +346,7 @@ static const I18nEntry kI18n[] = {
   { "Sound off", { 0, "Geluid uit","Ton aus","Son désactivé","Sonido apagado","Suono spento","Звук выкл","Звук вимк","Звук изкл","Звук искљ","Ήχος όχι" } },
   { "TCP on", { 0, "TCP aan","TCP ein","TCP activé","TCP activado","TCP acceso","TCP вкл","TCP увімк","TCP вкл","TCP укљ","TCP ναι" } },
   { "TCP off", { 0, "TCP uit","TCP aus","TCP désactivé","TCP apagado","TCP spento","TCP выкл","TCP вимк","TCP изкл","TCP искљ","TCP όχι" } },
-  { "Welcome to Meshcomod", { 0, "Welkom bij Meshcomod","Willkommen bei Meshcomod","Bienvenue sur Meshcomod","Bienvenido a Meshcomod","Benvenuto in Meshcomod","Добро пожаловать в Meshcomod","Ласкаво просимо до Meshcomod","Добре дошли в Meshcomod","Добро дошли у Meshcomod","Καλώς ήρθατε στο Meshcomod" } },
+  { "Welcome to WADAMESH", { 0, "Welkom bij WADAMESH","Willkommen bei WADAMESH","Bienvenue sur WADAMESH","Bienvenido a WADAMESH","Benvenuto in WADAMESH","Добро пожаловать в WADAMESH","Ласкаво просимо до WADAMESH","Добре дошли в WADAMESH","Добро дошли у WADAMESH","Καλώς ήρθατε στο WADAMESH" } },
   { "Get Started", { 0, "Aan de slag","Loslegen","Commencer","Empezar","Inizia","Начать","Почати","Започни","Започни","Ξεκινήστε" } },
   { "Choose your name", { 0, "Kies je naam","Wählen Sie Ihren Namen","Choisissez votre nom","Elige tu nombre","Scegli il tuo nome","Выберите имя","Виберіть ім'я","Изберете името си","Изаберите своје име","Επιλέξτε το όνομά σας" } },
   { "Your name", { 0, "Je naam","Ihr Name","Votre nom","Tu nombre","Il tuo nome","Ваше имя","Ваше ім'я","Вашето име","Ваше име","Το όνομά σας" } },

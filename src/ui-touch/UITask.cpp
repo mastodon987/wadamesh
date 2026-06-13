@@ -4858,7 +4858,7 @@ static void sysInfoText(char* buf, size_t cap) {
                 "Last reset\n  %s\n\n", resetReasonString(esp_reset_reason()));
 #endif
   p += snprintf(buf + p, cap - p,
-                "Build\n  %s\n  %s\n  Meshcomod TOUCH\n",
+                "Build\n  %s\n  %s\n  WADAMESH TOUCH\n",
                 FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
   (void)p;
 }
@@ -9075,7 +9075,7 @@ static struct { fs::FS* fs; char path[200]; char name[64]; bool isdir; bool is_c
   s_fm_clip = {};
 
 static const char* k_term_banner =
-  "Meshcomod terminal - CLI + chat on this node.\n"
+  "WADAMESH terminal - CLI + chat on this node.\n"
   "Type a command or tap the list icon for the picker.\n"
   "Chat: 'to <name>' joins a contact/channel, then just\n"
   "      type to send. 'exit' leaves. list / channels.\n"
@@ -18415,7 +18415,7 @@ static void setupShowStep(int step) {
   const lv_coord_t btn_y = sh - kSetupBtnH - 10;
 
   if (step == 0) {
-    setupHeader("Welcome to Meshcomod", nullptr, nullptr);
+    setupHeader("Welcome to WADAMESH", nullptr, nullptr);
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
         "Let's set up your device.\n\n"
