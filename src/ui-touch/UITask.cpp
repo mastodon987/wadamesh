@@ -11792,6 +11792,29 @@ static inline void tileCacheMkdir(const char* rel) {
   s_tile_fs->mkdir(p);
 }
 
+// True when the LittleFS tile cache is nearly full. A FULL/fragmented LittleFS
+// FAULTS inside lfs_alloc during mkdir (coredump 2026-06-14: reboot while a
+// route replay re-centred the map onto an un-cached area and the fetch task
+// wrote new z16 tiles) — it does not return a clean NOSPC. So we must STOP
+// writing tiles before the partition fills. usedBytes()/totalBytes() traverse
+// the whole FS, so the result is cached ~5 s; this is only ever called on the
+// core-0 fetch task, never the UI thread. Reads keep working, so already-cached
+// areas still display — only NEW tiles stop being cached.
+static bool tilesFsLowSpace() {
+  if (!s_tiles_fs_ready) return false;            // no LittleFS cache partition -> nothing to guard
+  static uint32_t last_ms = 0;
+  static bool     low     = false;
+  const uint32_t now = millis();
+  if (last_ms == 0 || (uint32_t)(now - last_ms) >= 5000) {
+    last_ms = now ? now : 1;
+    const size_t tot = s_tiles_fs.totalBytes();
+    const size_t use = s_tiles_fs.usedBytes();
+    const size_t freeb = (tot > use) ? (tot - use) : 0;
+    low = (freeb < 320 * 1024);                   // keep >= 320 KB headroom (tile + dir blocks + GC)
+  }
+  return low;
+}
+
 // ----- Wi-Fi tile fetcher (Phase 4.1c) -----
 //
 // When the user is on the Map tab AND Wi-Fi is up, any tile that fails
@@ -12286,6 +12309,14 @@ static void tileFetchTaskFn(void* arg) {
         if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
         continue;
       }
+    }
+
+    // Tile-cache full? Stop writing — a full LittleFS faults inside lfs_alloc
+    // during the dir mkdir below (reboot), instead of failing cleanly.
+    if (tilesFsLowSpace()) {
+      ++s_tile_fetch_failed;
+      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+      continue;
     }
 
     ensureTilesDirPath(req.z, req.x);
