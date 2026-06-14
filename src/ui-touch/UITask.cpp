@@ -25,6 +25,7 @@
   #endif
   #include <esp_timer.h>
   #include <esp_chip_info.h>
+  #include <nvs.h>            // nvs_get_stats() for the About-tab NVS usage line
   #include <Esp.h>
   #include <esp_ota_ops.h>     // A/B slot info + reboot-to-recovery (esp_ota_get_running_partition)
   #include <esp_partition.h>   // find/erase otadata to fall back to the factory(recovery) slot
@@ -4887,6 +4888,17 @@ static void sysInfoText(char* buf, size_t cap) {
                 (unsigned)(flash_chip_size / (1024u * 1024u)),
                 (unsigned)(sketch_size / 1024u),
                 (unsigned)(sketch_free / 1024u));
+
+  // NVS usage across the whole 'nvs' partition (shared by Wi-Fi creds, the
+  // Launcher, and our settings). Near-100% is what triggers the boot loop.
+  nvs_stats_t nvs{};
+  if (nvs_get_stats(NULL, &nvs) == ESP_OK && nvs.total_entries > 0) {
+    const unsigned pct = (unsigned)((nvs.used_entries * 100ULL) / nvs.total_entries);
+    p += snprintf(buf + p, cap - p,
+                  "NVS (settings store)\n  %u / %u entries (%u%%)\n  free: %u  namespaces: %u\n\n",
+                  (unsigned)nvs.used_entries, (unsigned)nvs.total_entries, pct,
+                  (unsigned)nvs.free_entries, (unsigned)nvs.namespace_count);
+  }
 
   p += snprintf(buf + p, cap - p,
                 "Last reset\n  %s\n\n", resetReasonString(esp_reset_reason()));
