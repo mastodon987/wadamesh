@@ -13376,8 +13376,11 @@ static void showRouteHud() {
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   s_route_hud = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_route_hud);
-  lv_obj_set_size(s_route_hud, sw - 16, 34);
-  lv_obj_align(s_route_hud, LV_ALIGN_TOP_MID, 0, STATUSBAR_H + 4);
+  // Keep the right-edge map button column (settings/zoom/recenter live at
+  // x ~ sw-36) clear: anchor top-LEFT and stop the pill before that column,
+  // so the replay button can't land under the settings gear.
+  lv_obj_set_size(s_route_hud, sw - 48, 34);
+  lv_obj_align(s_route_hud, LV_ALIGN_TOP_LEFT, 6, STATUSBAR_H + 4);
   lv_obj_set_style_bg_color(s_route_hud, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_route_hud, LV_OPA_90, LV_PART_MAIN);
   lv_obj_set_style_radius(s_route_hud, 12, LV_PART_MAIN);
@@ -13388,7 +13391,7 @@ static void showRouteHud() {
 
   s_route_hud_lbl = lv_label_create(s_route_hud);
   lv_label_set_long_mode(s_route_hud_lbl, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(s_route_hud_lbl, sw - 16 - 12 - 42);   // leave room for the replay button
+  lv_obj_set_width(s_route_hud_lbl, sw - 48 - 12 - 42);   // leave room for the replay button
   lv_obj_align(s_route_hud_lbl, LV_ALIGN_LEFT_MID, 8, 0);
   lv_obj_set_style_text_color(s_route_hud_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_route_hud_lbl, &g_font_14, LV_PART_MAIN);
