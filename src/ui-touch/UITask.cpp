@@ -484,6 +484,7 @@ struct GlobalStatusBar {
   lv_obj_t* layout_label;   // EN / BG indicator, right side
   lv_obj_t* chan_gear;      // channel-settings gear, left of the thread name (channels only)
   lv_obj_t* sig_bars[4];    // mesh signal-strength bars (lit count = last-heard SNR)
+  lv_obj_t* sig_box;        // container holding sig_bars (slides over when charging hides the %)
 };
 static GlobalStatusBar g_statusbar = {};
 static void updateGlobalStatusBar();   // fwd decl, called from refresh tick
@@ -18338,6 +18339,7 @@ static void buildGlobalStatusBar() {
     lv_obj_set_size(sb, 15, 12);
     lv_obj_align(sb, LV_ALIGN_RIGHT_MID, -54, 0);
     lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
+    g_statusbar.sig_box = sb;
     const int bw = 3, gap = 1;
     const int hh[4] = {4, 6, 9, 12};
     for (int i = 0; i < 4; i++) {
@@ -18533,6 +18535,17 @@ static void updateGlobalStatusBar() {
     else if (pct < 0)   snprintf(buf, sizeof(buf), "?");
     else                snprintf(buf, sizeof(buf), "%d%%", pct);
     lv_label_set_text(g_statusbar.batt_pct, buf);
+    if (charging != s_last_charging) {
+      // The % column disappears while charging (bolt only), so slide everything
+      // left of the battery rightward to keep it snug against the bolt — else a
+      // %-wide gap opens between the signal bars and the lightning glyph.
+      const int d = charging ? 32 : 0;
+      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -54  + d, 0);
+      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -73  + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -95  + d, 0);
+      if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -110 + d, 0);
+      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -150 + d, 0);
+    }
     s_last_pct = pct;
     s_last_charging = charging;
   }
