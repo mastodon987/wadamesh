@@ -11670,14 +11670,19 @@ static inline uint32_t tileFetchDedupKey(uint8_t z, int32_t x, int32_t y) {
   // z in 4 bits, x in 14, y in 14 — fits at zooms up to 16.
   return (((uint32_t)z & 0xF) << 28) | (((uint32_t)x & 0x3FFF) << 14) | ((uint32_t)y & 0x3FFF);
 }
-static bool tileFetchSeenRecently(uint8_t z, int32_t x, int32_t y) {
+static bool tileFetchSeen(uint8_t z, int32_t x, int32_t y) {
   const uint32_t k = tileFetchDedupKey(z, x, y);
-  for (int i = 0; i < k_tile_fetch_dedup_size; ++i) {
+  for (int i = 0; i < k_tile_fetch_dedup_size; ++i)
     if (s_tile_fetch_dedup[i] == k) return true;
-  }
-  s_tile_fetch_dedup[s_tile_fetch_dedup_head] = k;
-  s_tile_fetch_dedup_head = (s_tile_fetch_dedup_head + 1) % k_tile_fetch_dedup_size;
   return false;
+}
+// Remember a tile as in-flight ONLY after it's actually been queued. Marking it
+// "seen" before the queue send (the old behaviour) meant a tile dropped by a
+// full queue — or one whose fetch later failed — was never retried, so the map
+// sat on "downloading" forever and re-opening did nothing.
+static void tileFetchMarkSeen(uint8_t z, int32_t x, int32_t y) {
+  s_tile_fetch_dedup[s_tile_fetch_dedup_head] = tileFetchDedupKey(z, x, y);
+  s_tile_fetch_dedup_head = (s_tile_fetch_dedup_head + 1) % k_tile_fetch_dedup_size;
 }
 #endif  // MULTI_TRANSPORT_COMPANION
 #endif  // ESP32
@@ -12273,11 +12278,12 @@ static bool ensureTileFetchTaskRunning() {
 static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
   if (s_tiles_from_sd) return;            // microSD tile source: never fetch from the server
   if (WiFi.status() != WL_CONNECTED) return;
-  if (tileFetchSeenRecently(z, x, y)) return;
+  if (tileFetchSeen(z, x, y)) return;
   ensureTileFetchTaskRunning();
   if (!s_tile_fetch_queue) return;
   TileFetchReq req = {z, x, y};
   if (xQueueSend(s_tile_fetch_queue, &req, 0) == pdTRUE) {
+    tileFetchMarkSeen(z, x, y);    // only remember it once it's truly queued
     ++s_tile_fetch_pending;
   }
 }
@@ -13912,6 +13918,14 @@ static void mapRecenterCb(lv_event_t* e) {
 // Recenters on self GPS and rebuilds the tile grid. Called from tabChangedCb
 // every time the user switches TO the Map tab.
 static void onMapTabActivated() {
+#if defined(MULTI_TRANSPORT_COMPANION)
+  // Fresh fetch slate each map open: forget the "recently queued" dedup ring so
+  // tiles that failed or were dropped on a previous visit get another chance
+  // (the fetch task still skips anything already on disk). Without this a level
+  // that showed "downloading" once would never re-attempt on re-open.
+  memset(s_tile_fetch_dedup, 0, sizeof(s_tile_fetch_dedup));
+  s_tile_fetch_dedup_head = 0;
+#endif
   // The entire UI is now clocked at 160 MHz from UITask::begin, so there's
   // no per-tab boost dance here anymore. (Tried 240 MHz briefly — the
   // PSRAM bus tightens enough at that clock for the SJPG decoder to
