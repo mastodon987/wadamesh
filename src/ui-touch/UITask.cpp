@@ -13502,6 +13502,7 @@ static lv_obj_t* s_map_touch       = nullptr;   // transparent full-page touch c
 static lv_obj_t* s_map_info_lbl    = nullptr;   // coords read-out (bottom-left corner)
 static lv_obj_t* s_map_count_lbl   = nullptr;   // marker / download count (bottom-right corner)
 static lv_obj_t* s_map_status_lbl  = nullptr;
+static lv_obj_t* s_map_zoom_lbl    = nullptr;   // zoom + tile path at center (top-left, under © OSM)
 
 #if defined(ESP32)
 // Dedicated LittleFS instance for the map tile pack — mounts the "tiles"
@@ -16268,6 +16269,12 @@ static void makeMapTab(lv_obj_t* tab) {
   style_corner(s_map_count_lbl);
   lv_label_set_text(s_map_count_lbl, TR(""));
   lv_obj_align(s_map_count_lbl, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
+  // Zoom + tile path at the current center — a second line just under the
+  // "© OpenStreetMap" status-bar attribution (top-left).
+  s_map_zoom_lbl = lv_label_create(tab);
+  style_corner(s_map_zoom_lbl);
+  lv_label_set_text(s_map_zoom_lbl, TR(""));
+  lv_obj_align(s_map_zoom_lbl, LV_ALIGN_TOP_LEFT, 2, STATUSBAR_H + 2);
   (void)kMapInfoH;
 
   // Touch catcher: the tiles live on the background canvas (behind the tabview)
@@ -16358,6 +16365,24 @@ static void refreshMapInfoLabel() {
   else                          snprintf(buf, sizeof(buf), "%.4f, %.4f", lat, lon);
   lv_label_set_text(s_map_info_lbl, buf);
   if (s_map_count_lbl) lv_label_set_text(s_map_count_lbl, tail);
+
+  // Zoom + tile path (z / x / y) at the current map center — the "second line"
+  // under the © OpenStreetMap attribution. Uses the map center (post-pan), not
+  // the self GPS fix.
+  if (s_map_zoom_lbl) {
+    if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) {
+      lv_label_set_text(s_map_zoom_lbl, "");
+    } else {
+      double cwx, cwy;
+      latLonToWorldPx(s_map_center_lat, s_map_center_lon, s_map_zoom, &cwx, &cwy);
+      const long tx = (long)floor(cwx / 256.0);
+      const long ty = (long)floor(cwy / 256.0);
+      char zbuf[40];
+      snprintf(zbuf, sizeof zbuf, "z%u  %u/%ld/%ld",
+               (unsigned)s_map_zoom, (unsigned)s_map_zoom, tx, ty);
+      lv_label_set_text(s_map_zoom_lbl, zbuf);
+    }
+  }
 }
 
 // ---- Discord-style unread divider + jump-to-latest (state declared earlier;
