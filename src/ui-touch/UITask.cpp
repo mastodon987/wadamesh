@@ -8825,6 +8825,7 @@ static void actionSheetLosCb(lv_event_t* e) {
 }
 #endif  // ESP32 && MULTI_TRANSPORT_COMPANION
 
+static void actionSheetShowOnMapCb(lv_event_t* e);   // defined with the map code (uses map statics)
 static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map = false) {
   s_action_sheet_mesh_idx = mesh_idx;
   s_action_sheet_is_repeater = is_repeater;
@@ -8964,6 +8965,13 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     mk_btn(LV_SYMBOL_ENVELOPE "  Message", actionSheetSendMsgCb, 0);
   }
   mk_btn(LV_SYMBOL_BATTERY_3 "  Telemetry", actionSheetTelemetryCb, 0);
+  // Show on map — only when the contact has a location, and not when the sheet
+  // was opened from the map (you're already there).
+  if (!from_map) {
+    ContactInfo _mc;
+    if (the_mesh.getContactByIdx(s_action_sheet_mesh_idx, _mc) && (_mc.gps_lat != 0 || _mc.gps_lon != 0))
+      mk_btn(LV_SYMBOL_GPS "  Show on map", actionSheetShowOnMapCb, 0);
+  }
   if (is_repeater) {
     mk_btn(LV_SYMBOL_GPS      "  Trace SNR", actionSheetTracePingCb, 0);
     mk_btn(LV_SYMBOL_SETTINGS "  Admin",     actionSheetAdminCb,     0);
@@ -15937,6 +15945,26 @@ static void mapContactsRowCb(lv_event_t* e) {
     snprintf(msg, sizeof(msg), TR("Centered on %s"), nm[0] ? nm : "contact");
     g_lv.task->showAlert(msg, 1200);
   }
+}
+
+// "Show on map" from the contact action sheet: centre the map on the contact's
+// last-known GPS and switch to the Map tab. Defined here (not with the sheet)
+// because it touches the map statics declared in this region.
+static void actionSheetShowOnMapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  ContactInfo c;
+  const bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
+  closeActionSheet();
+  if (!ok) { if (g_lv.task) g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  if (c.gps_lat == 0 && c.gps_lon == 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("No location for this contact"), 1500);
+    return;
+  }
+  s_map_center_lat = (double)c.gps_lat / 1.0e6;
+  s_map_center_lon = (double)c.gps_lon / 1.0e6;
+  s_map_view_inited = true;   // keep this centre — don't recentre on self on open
+  if (s_map_zoom < k_map_zoom_max) s_map_zoom = (uint8_t)(s_map_zoom + 1);
+  goToTab(MAP_TAB_INDEX);      // onMapTabActivated renders tiles + markers + overlay
 }
 
 // One GPS-bearing contact, with the derived sort keys precomputed.
