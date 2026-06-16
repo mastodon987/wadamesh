@@ -5519,6 +5519,10 @@ static void sysInfoText(char* buf, size_t cap) {
   p += snprintf(buf + p, cap - p,
                 "Build\n  %s\n  %s\n  WADAMESH TOUCH\n",
                 FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
+#if defined(WADAMESH_FORK_BUILD)
+  // Defined in platformio.ini for this fork's builds; absent upstream.
+  p += snprintf(buf + p, cap - p, "  unofficial fork build\n");
+#endif
   (void)p;
 }
 
