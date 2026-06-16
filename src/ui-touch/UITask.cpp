@@ -9935,8 +9935,8 @@ static const uint32_t k_batt_log_keep_secs = 24u * 60u * 60u;    // 24h window
 static lv_obj_t*      s_batt_chart_root    = nullptr;
 
 // Append one sample + drop anything older than 24h. Line columns (tab-separated,
-// human-readable): <epoch>\t<YYYY-MM-DD HH:MM>\t<millivolts>\t<percent>
-static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct) {
+// human-readable): <epoch>\t<YYYY-MM-DD HH:MM>\t<millivolts>\t<percent>\t<cpuMHz>
+static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_mhz) {
   if (SD.cardType() == CARD_NONE) return;
   markSdIo();
   char when[20] = "----------------";
@@ -9955,7 +9955,7 @@ static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct) {
     }
     rf.close();
   }
-  wf.printf("%lu\t%s\t%u\t%d\n", (unsigned long)epoch, when, (unsigned)mv, pct);
+  wf.printf("%lu\t%s\t%u\t%d\t%u\n", (unsigned long)epoch, when, (unsigned)mv, pct, (unsigned)cpu_mhz);
   wf.close();
   SD.remove(k_batt_log_path);
   SD.rename(k_batt_log_tmp, k_batt_log_path);
@@ -9969,13 +9969,18 @@ static void batteryLogTick(uint32_t now_ms) {
   s_next_ms = (now_ms ? now_ms : 1) + k_batt_log_period_ms;
   const uint16_t mv = batteryMvSmoothed();
   if (mv == 0) return;                               // no battery reading yet
-  batteryLogAppend((uint32_t)time(nullptr), mv, batteryPercentFromMv(mv));
+  batteryLogAppend((uint32_t)time(nullptr), mv, batteryPercentFromMv(mv),
+                   (uint16_t)getCpuFrequencyMhz());
 }
 
-static void batteryChartDismissCb(lv_event_t* e) {
-  if (lv_event_get_target(e) != s_batt_chart_root) return;   // backdrop only
+static void batteryChartClose() {
   if (s_batt_chart_root) { lv_obj_del(s_batt_chart_root); s_batt_chart_root = nullptr; }
 }
+static void batteryChartDismissCb(lv_event_t* e) {
+  if (lv_event_get_target(e) != s_batt_chart_root) return;   // backdrop only
+  batteryChartClose();
+}
+static void batteryChartCloseCb(lv_event_t* e) { (void)e; batteryChartClose(); }  // the X badge
 
 // Build the 24h battery-voltage chart popup from the SD log.
 static void openBatteryChartWindow() {
@@ -9994,13 +9999,14 @@ static void openBatteryChartWindow() {
   const lv_coord_t cardw = sw - 24;
   lv_obj_t* card = lv_obj_create(s_batt_chart_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, 200);
+  lv_obj_set_size(card, cardw, 216);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
   styleSurface(card, COLOR_PANEL, 8);
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  addCloseXBadge(card, batteryChartCloseCb);   // universal top-right X
 
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, TR("Battery \xe2\x80\x94 last 24h"));
@@ -10008,10 +10014,12 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
 
-  // Read the log into a voltage array (oldest..newest). The file is trimmed to
-  // 24h on write, so reading from the start gives the right window.
+  // Read the log into voltage + cpu arrays (oldest..newest). The file is trimmed
+  // to 24h on write, so reading from the start gives the right window. cpu is the
+  // 5th column (absent in pre-upgrade lines -> 0, drawn as a gap).
   static const int k_max_pts = 288;   // 24h / 5min
   static uint16_t mvs[k_max_pts];
+  static uint16_t cpus[k_max_pts];
   int n = 0;
   if (SD.cardType() != CARD_NONE) {
     markSdIo();
@@ -10024,8 +10032,12 @@ static void openBatteryChartWindow() {
         const int t2 = (t1 >= 0) ? ln.indexOf('\t', t1 + 1) : -1;
         const int t3 = (t2 >= 0) ? ln.indexOf('\t', t2 + 1) : -1;
         if (t2 < 0 || t3 < 0) continue;
+        const int t4 = ln.indexOf('\t', t3 + 1);
         const int mv = ln.substring(t2 + 1, t3).toInt();
-        if (mv > 0) mvs[n++] = (uint16_t)mv;
+        if (mv <= 0) continue;
+        mvs[n]  = (uint16_t)mv;
+        cpus[n] = (uint16_t)((t4 >= 0) ? ln.substring(t4 + 1).toInt() : 0);
+        ++n;
       }
       rf.close();
     }
@@ -10041,26 +10053,54 @@ static void openBatteryChartWindow() {
     return;
   }
 
+  // Chart inset so the axis labels (V left, MHz right) have room.
+  const int chart_x = 24, chart_rpad = 26, chart_y = 24, chart_h = 120;
   lv_obj_t* chart = lv_chart_create(card);
-  lv_obj_set_size(chart, cardw - 20, 128);
-  lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 0, 24);
+  lv_obj_set_size(chart, cardw - 20 - chart_x - chart_rpad, chart_h);
+  lv_obj_align(chart, LV_ALIGN_TOP_LEFT, chart_x, chart_y);
   lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(chart, n);
-  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 3200, 4700);   // 3.2 V .. 4.7 V
-  lv_chart_set_div_line_count(chart, 5, 0);
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y,   3200, 4700);   // 3.2 V .. 4.7 V (green)
+  lv_chart_set_range(chart, LV_CHART_AXIS_SECONDARY_Y,   60,  260);   // CPU MHz (orange)
+  lv_chart_set_div_line_count(chart, 4, 6);          // 4 voltage lines, 6 time lines
   lv_obj_set_style_bg_color(chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_border_color(chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_border_opa(chart, LV_OPA_30, LV_PART_MAIN);
   lv_obj_set_style_border_width(chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(chart, 6, LV_PART_MAIN);
-  lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);   // line only, no point dots
-  lv_chart_series_t* ser = lv_chart_add_series(chart, lv_color_hex(COLOR_STATUS_OK), LV_CHART_AXIS_PRIMARY_Y);
-  for (int i = 0; i < n; ++i) lv_chart_set_next_value(chart, ser, (lv_coord_t)mvs[i]);
+  // Lighter grid lines (div lines use the chart's MAIN line style).
+  lv_obj_set_style_line_color(chart, lv_color_hex(0x3A3F45), LV_PART_MAIN);
+  lv_obj_set_style_line_opa(chart, LV_OPA_30, LV_PART_MAIN);
+  lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
+  // Point dots so a single sample (or sparse data) is visible, not just a line.
+  lv_obj_set_style_size(chart, 2, LV_PART_INDICATOR);
+  lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(COLOR_STATUS_OK), LV_CHART_AXIS_PRIMARY_Y);
+  lv_chart_series_t* cser = lv_chart_add_series(chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);  // orange CPU
+  for (int i = 0; i < n; ++i) {
+    lv_chart_set_next_value(chart, vser, (lv_coord_t)mvs[i]);
+    lv_chart_set_next_value(chart, cser, cpus[i] > 0 ? (lv_coord_t)cpus[i] : LV_CHART_POINT_NONE);
+  }
 
-  char sub[72];
-  snprintf(sub, sizeof sub, "now %u.%02u V   %d samples   3.2-4.7 V",
-           (unsigned)(mvs[n-1] / 1000), (unsigned)((mvs[n-1] % 1000) / 10), n);
+  // Axis notes: voltage (green) on the left, CPU MHz (orange) on the right, time on the X.
+  auto axis_lbl = [&](const char* txt, uint32_t color, lv_align_t al, int xo, int yo) {
+    lv_obj_t* l = lv_label_create(card);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_align_to(l, chart, al, xo, yo);
+  };
+  axis_lbl("4.7V", COLOR_STATUS_OK, LV_ALIGN_OUT_LEFT_TOP,     -2, 0);
+  axis_lbl("3.2V", COLOR_STATUS_OK, LV_ALIGN_OUT_LEFT_BOTTOM,  -2, -8);
+  axis_lbl("260",  0xF5A623,        LV_ALIGN_OUT_RIGHT_TOP,     2, 0);
+  axis_lbl("60",   0xF5A623,        LV_ALIGN_OUT_RIGHT_BOTTOM,  2, -8);
+  axis_lbl("-24h", COLOR_SUB,       LV_ALIGN_OUT_BOTTOM_LEFT,   0, 2);
+  axis_lbl("now",  COLOR_SUB,       LV_ALIGN_OUT_BOTTOM_RIGHT,  0, 2);
+
+  char sub[80];
+  snprintf(sub, sizeof sub, "now %u.%02u V   CPU %u MHz   %d samples",
+           (unsigned)(mvs[n-1] / 1000), (unsigned)((mvs[n-1] % 1000) / 10),
+           (unsigned)getCpuFrequencyMhz(), n);
   lv_obj_t* sl = lv_label_create(card);
   lv_label_set_text(sl, sub);
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
@@ -18294,6 +18334,9 @@ static void formatDistanceBadge(char* out, size_t out_cap,
   }
 }
 
+// Clock snapshot for the contacts sort's "?" test — set before qsort so the
+// non-capturing comparator can read it (mirrors formatAgeBadge's condition).
+static uint32_t s_ct_sort_now = 0;
 static void refreshContactsList() {
   if (!g_lv.contacts_list || !g_lv.task) return;
   if (s_ctd_active) return;   // mid bulk-delete: don't rebuild rows under the progress modal
@@ -18418,6 +18461,9 @@ static void refreshContactsList() {
     e.name[sizeof(e.name) - 1] = '\0';
   }
 
+  // Capture the clock before sorting (the qsort comparator is non-capturing).
+  { mesh::RTCClock* rtc = the_mesh.getRTCClock(); s_ct_sort_now = rtc ? rtc->getCurrentTime() : 0; }
+
   qsort(s_entries, n_entries, sizeof(Entry),
         [](const void* a, const void* b) -> int {
     const Entry* ea = static_cast<const Entry*>(a);
@@ -18428,11 +18474,16 @@ static void refreshContactsList() {
     if (ea->is_fav != eb->is_fav) {
       return ea->is_fav ? -1 : 1;
     }
-    // Contacts with an unknown last-heard time (rendered as "?") sink to the
-    // end — after favorites — in every sort mode. last_heard == 0 is the
-    // "never heard / unknown" sentinel (ContactInfo.last_advert_timestamp).
-    const bool a_unknown = (ea->last_heard == 0);
-    const bool b_unknown = (eb->last_heard == 0);
+    // Contacts whose last-heard renders as "?" sink to the end in every sort
+    // mode. "?" is NOT just last_heard==0: formatAgeBadge also shows it for a
+    // future/garbage timestamp (RTC unset -> now <= last_heard) or one over
+    // 400 days old. Mirror that exact condition using the captured clock so
+    // the sort matches what the row actually displays.
+    const uint32_t now = s_ct_sort_now;
+    const uint32_t a_age = (now > ea->last_heard && ea->last_heard != 0) ? (now - ea->last_heard) : 0;
+    const uint32_t b_age = (now > eb->last_heard && eb->last_heard != 0) ? (now - eb->last_heard) : 0;
+    const bool a_unknown = (a_age == 0 || a_age > (uint32_t)400 * 24u * 3600u);
+    const bool b_unknown = (b_age == 0 || b_age > (uint32_t)400 * 24u * 3600u);
     if (a_unknown != b_unknown) return a_unknown ? 1 : -1;
     if (g_contacts_sort == CONTACTS_SORT_LAST_HEARD ||
         g_contacts_sort == CONTACTS_SORT_LAST_MSG) {
@@ -21531,21 +21582,18 @@ static void updateGlobalStatusBar() {
 #endif
 
   // ---- Clock placement ----
-  // When the device name is hidden on Home (display setting) the left zone is
-  // free, so park the clock there. Otherwise it sits top-right; charging slides
-  // it +32 to hug the bolt once the % column hides. Re-aligned only on a state
-  // change (tab / setting / charging) so it isn't laid out every tick.
+  // With "hide device name" on, the clock sits CENTRED on every screen — clear of
+  // both the left-zone title (chat / Files / map credit) and the right-side icon
+  // cluster, so it never collides with e.g. the "Files" header. Otherwise it's
+  // top-right; charging slides it +32 to hug the bolt once the % column hides.
+  // Re-aligned only on a state change so it isn't laid out every tick.
   {
-    int ctab = g_lv.tabview ? (int)lv_tabview_get_tab_act(g_lv.tabview) : -1;
-    const bool name_hidden_home = touchPrefsGetHideNodeName()
-                                  && s_settings_open_cat < 0 && s_chat_title[0] == '\0'
-                                  && ctab == HOME_TAB_INDEX;
-    static int8_t s_clk_left = -1;     // -1 = unset -> forces the first align
-    static bool   s_clk_chg  = false;
-    const int8_t want = name_hidden_home ? 1 : 0;
-    if (want != s_clk_left || (!want && charging != s_clk_chg)) {
-      s_clk_left = want; s_clk_chg = charging;
-      if (want) lv_obj_align(g_statusbar.clock, LV_ALIGN_LEFT_MID, 6, 0);
+    static int8_t s_clk_center = -1;   // -1 = unset -> forces the first align
+    static bool   s_clk_chg     = false;
+    const int8_t want = touchPrefsGetHideNodeName() ? 1 : 0;
+    if (want != s_clk_center || (!want && charging != s_clk_chg)) {
+      s_clk_center = want; s_clk_chg = charging;
+      if (want) lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
       else      lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, charging ? -94 : -126, 0);
     }
   }
@@ -23205,10 +23253,14 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
 // screen until tapped away and can scroll if it's long. Tap the dimmed backdrop
 // to close.
 static lv_obj_t* s_telemetry_root = nullptr;
-static void telemetryWindowDismissCb(lv_event_t* e) {
-  if (lv_event_get_target(e) != s_telemetry_root) return;   // backdrop only
+static void telemetryClose() {
   if (s_telemetry_root) { lv_obj_del(s_telemetry_root); s_telemetry_root = nullptr; }
 }
+static void telemetryWindowDismissCb(lv_event_t* e) {
+  if (lv_event_get_target(e) != s_telemetry_root) return;   // backdrop only
+  telemetryClose();
+}
+static void telemetryCloseCb(lv_event_t* e) { (void)e; telemetryClose(); }   // the X badge
 static void openTelemetryWindow(const char* text) {
   if (s_telemetry_root) { lv_obj_del(s_telemetry_root); s_telemetry_root = nullptr; }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -23231,6 +23283,7 @@ static void openTelemetryWindow(const char* text) {
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);   // card stays scrollable for long readings
+  addCloseXBadge(card, telemetryCloseCb);             // universal top-right X
 
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, TR("Telemetry"));
