@@ -5474,6 +5474,34 @@ static void sysInfoText(char* buf, size_t cap) {
                 (unsigned)(sketch_size / 1024u),
                 (unsigned)(sketch_free / 1024u));
 
+#if defined(HAS_TDECK_GT911)
+  // microSD size + free. usedBytes() scans the FAT (slow on a big card), and
+  // sysInfoText runs ~1 Hz while the About sheet is open — so the result is
+  // cached ~30 s rather than recomputed every refresh.
+  {
+    static uint32_t sd_stat_ms = 0;
+    static uint64_t sd_tot = 0, sd_free = 0;
+    static bool     sd_ok = false;
+    const uint32_t nowm = millis();
+    if (sd_stat_ms == 0 || (uint32_t)(nowm - sd_stat_ms) >= 30000) {
+      sd_stat_ms = nowm ? nowm : 1;
+      if (SD.cardType() != CARD_NONE) {
+        const uint64_t t = SD.totalBytes(), u = SD.usedBytes();
+        sd_tot = t; sd_free = (t > u) ? (t - u) : 0; sd_ok = (t > 0);
+      } else {
+        sd_ok = false;
+      }
+    }
+    if (sd_ok)
+      p += snprintf(buf + p, cap - p,
+                    "microSD\n  size: %llu MB\n  free: %llu MB\n\n",
+                    (unsigned long long)(sd_tot  / (1024ull * 1024ull)),
+                    (unsigned long long)(sd_free / (1024ull * 1024ull)));
+    else
+      p += snprintf(buf + p, cap - p, "microSD\n  not mounted\n\n");
+  }
+#endif
+
   // NVS usage across the whole 'nvs' partition (shared by Wi-Fi creds, the
   // Launcher, and our settings). Near-100% is what triggers the boot loop.
   nvs_stats_t nvs{};
