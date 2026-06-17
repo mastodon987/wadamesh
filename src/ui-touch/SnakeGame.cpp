@@ -72,13 +72,14 @@ void SnakeGame::render() {
 
 void SnakeGame::updateScoreLabel() {
   if (!score_) return;
-  if (over_)        lv_label_set_text_fmt(score_, "Game over  \xe2\x80\x94  score %d   (tap to restart)", score_val_);
+  if (over_)         lv_label_set_text_fmt(score_, "Game over  \xe2\x80\x94  score %d   (tap to restart)", score_val_);
+  else if (paused_)  lv_label_set_text_fmt(score_, "Paused  \xe2\x80\x94  score %d", score_val_);
   else if (started_) lv_label_set_text_fmt(score_, "score %d", score_val_);
-  else              lv_label_set_text(score_, "Snake  \xe2\x80\x94  swipe or roll the trackball");
+  else               lv_label_set_text(score_, "Snake  \xe2\x80\x94  swipe or roll the trackball");
 }
 
 void SnakeGame::step() {
-  if (over_ || !started_) return;
+  if (over_ || !started_ || paused_) return;
   if (!(ndx_ == -dx_ && ndy_ == -dy_)) { dx_ = ndx_; dy_ = ndy_; }
   const int nx = bx_[0] + dx_, ny = by_[0] + dy_;
   const bool eat = (nx == fx_ && ny == fy_);
@@ -102,11 +103,23 @@ void SnakeGame::setDir(int dx, int dy) { ndx_ = dx; ndy_ = dy; }
 void SnakeGame::startGame() {
   if (started_) return;
   started_ = true;
+  paused_  = false;
   if (start_btn_) { lv_obj_del(start_btn_); start_btn_ = nullptr; }
+  if (pause_btn_) {                              // reveal the pause toggle now that we're playing
+    lv_obj_clear_flag(pause_btn_, LV_OBJ_FLAG_HIDDEN);
+    if (pause_lbl_) lv_label_set_text(pause_lbl_, LV_SYMBOL_PAUSE);
+  }
   reset();
   updateScoreLabel();
   render();
   if (!timer_) timer_ = lv_timer_create(timerCb, kStepMs, this);
+}
+
+void SnakeGame::togglePause() {
+  if (!started_ || over_) return;
+  paused_ = !paused_;
+  if (pause_lbl_) lv_label_set_text(pause_lbl_, paused_ ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
+  updateScoreLabel();
 }
 
 bool SnakeGame::open() {
@@ -145,6 +158,14 @@ bool SnakeGame::open() {
   lv_obj_add_event_cb(x, closeCb, LV_EVENT_CLICKED, this);
   lv_obj_t* xl = lv_label_create(x); lv_label_set_text(xl, LV_SYMBOL_CLOSE); lv_obj_center(xl);
 
+  // Pause/resume toggle, left of the X. Hidden until the game starts.
+  pause_btn_ = lv_btn_create(root_);
+  lv_obj_set_size(pause_btn_, 30, 24);
+  lv_obj_align(pause_btn_, LV_ALIGN_TOP_RIGHT, -40, 0);
+  lv_obj_add_event_cb(pause_btn_, pauseCb, LV_EVENT_CLICKED, this);
+  pause_lbl_ = lv_label_create(pause_btn_); lv_label_set_text(pause_lbl_, LV_SYMBOL_PAUSE); lv_obj_center(pause_lbl_);
+  lv_obj_add_flag(pause_btn_, LV_OBJ_FLAG_HIDDEN);
+
   // Paused: draw the initial snake, then wait on a centred "New game" button.
   reset();
   updateScoreLabel();
@@ -164,6 +185,7 @@ void SnakeGame::close() {
   if (root_)  { lv_obj_del(root_);   root_  = nullptr; }   // deletes canvas + button children
   if (buf_)   { lvglPsramFree(buf_);  buf_  = nullptr; }   // free AFTER the canvas is gone
   canvas_ = nullptr; score_ = nullptr; start_btn_ = nullptr;
+  pause_btn_ = nullptr; pause_lbl_ = nullptr;
 }
 
 // ---- LVGL C-callback trampolines (user_data = the instance) ----
@@ -189,6 +211,10 @@ void SnakeGame::tapCb(lv_event_t* e) {
 void SnakeGame::startCb(lv_event_t* e) {
   auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
   if (self) self->startGame();
+}
+void SnakeGame::pauseCb(lv_event_t* e) {
+  auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
+  if (self) self->togglePause();
 }
 void SnakeGame::closeCb(lv_event_t* e) {
   auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));

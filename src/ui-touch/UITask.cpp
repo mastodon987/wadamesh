@@ -1401,11 +1401,31 @@ static void addCloseXBadge(lv_obj_t* card, lv_event_cb_t cb, void* user_data = n
 // ============================================================
 // Display / input drivers
 // ============================================================
+// Screenshot capture: when g_shot_buf is set, lvglFlush mirrors every flushed
+// area into this full-screen RGB565 buffer (in addition to the panel write), so a
+// forced full redraw fills it with the composited screen. Only live during a shot.
+static lv_color_t* g_shot_buf = nullptr;
+static int         g_shot_w   = 0;
+static int         g_shot_h   = 0;
+
 static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
   (void)disp_drv;
   int32_t w = area->x2 - area->x1 + 1;
   int32_t h = area->y2 - area->y1 + 1;
   display.writePixelsRGB565(area->x1, area->y1, w, h, reinterpret_cast<uint16_t*>(color_p));
+  if (g_shot_buf) {                       // mirror this area into the screenshot buffer
+    for (int32_t row = 0; row < h; ++row) {
+      const int32_t dy = area->y1 + row;
+      if (dy < 0 || dy >= g_shot_h) continue;
+      int32_t x0 = area->x1, cw = w;
+      if (x0 < 0) { cw += x0; x0 = 0; }
+      if (x0 + cw > g_shot_w) cw = g_shot_w - x0;
+      if (cw > 0)
+        memcpy(g_shot_buf + (size_t)dy * g_shot_w + x0,
+               color_p + (size_t)row * w + (x0 - area->x1),
+               (size_t)cw * sizeof(lv_color_t));
+    }
+  }
   lv_disp_flush_ready(disp_drv);
 }
 
@@ -5586,6 +5606,9 @@ static void buildSystemInfoSettings() {
 // Map tile source: false = tile server + on-device cache, true = read tiles off the microSD.
 // The toggle + its callback (mapOptTilesSdCb) live in the map options popup, further down.
 static bool s_tiles_from_sd = false;
+// Map night mode: invert tile colours at render time only (the cached JPEG/PNG is
+// never altered). Loaded from prefs at boot; toggled in the map options popup.
+static bool s_map_night = false;
 
 // Distance units toggle (km <-> miles). Applies immediately — saves the
 // pref and forces the contacts list to re-render its distance badges.
@@ -7547,28 +7570,19 @@ static void actionSheetTelemetryCb(lv_event_t* e) {
   bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
   closeActionSheet();
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-  // Chain a guest LOGIN ahead of the telemetry REQ — same reason as ping:
-  // repeaters & sensors require us in their ACL before they will decrypt a
-  // PAYLOAD_TYPE_REQ. See sendStatusPingWithGuestLoginForUI for the full
-  // explanation.
-  int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);
 #if defined(HAS_TDECK_GT911)
-  // Open the telemetry window immediately (history + live state); it updates when
-  // the reply lands or the request times out. Telemetry uses its own pending /
-  // deadline (not the shared ping timeout) so it never raises a "No reply" toast.
+  // Open the telemetry window on its history; it does NOT auto-request. The user
+  // taps the Request button (refresh glyph, left of the gear) to poll.
   memcpy(s_telem_node, c.id.pub_key, 6);
   copyUtf8ReplacingMissingGlyphs(&g_font_14, s_telem_name, sizeof s_telem_name, c.name[0] ? c.name : "node");
   s_telem_reading[0] = '\0';
-  if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
-    s_telem_manual_pending = true;
-    s_telem_deadline_ms = millis() + UI_PING_TIMEOUT_MS;
-    markMeshRequest();
-    openTelemetryWindow(s_telem_node, s_telem_name, TELEM_IN_PROGRESS);
-  } else {
-    s_telem_manual_pending = false;
-    openTelemetryWindow(s_telem_node, s_telem_name, TELEM_FAILED);
-  }
+  s_telem_manual_pending = false;
+  openTelemetryWindow(s_telem_node, s_telem_name, TELEM_HISTORY);
 #else
+  // No telemetry window on this board — send straight away and toast the result.
+  // Chain a guest LOGIN ahead of the REQ (repeaters/sensors need us in their ACL
+  // before they decrypt a PAYLOAD_TYPE_REQ; see sendStatusPingWithGuestLoginForUI).
+  int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT)
     g_lv.task->showAlert(TR("Telemetry req\xe2\x80\xa6"), 1400);
   else
@@ -10198,7 +10212,7 @@ static void openBatteryChartWindow() {
   if (s_batt_show_cpu) {
     lv_chart_set_range(chart, LV_CHART_AXIS_SECONDARY_Y, 60, 260);                     // CPU MHz (orange)
     lv_chart_set_axis_tick(chart, LV_CHART_AXIS_SECONDARY_Y, 4, 0, 4, 1, true, 40);
-    cser = lv_chart_add_series(chart, lv_color_hex(0x7A5311), LV_CHART_AXIS_SECONDARY_Y); // dim orange CPU
+    cser = lv_chart_add_series(chart, lv_color_hex(0x4A5256), LV_CHART_AXIS_SECONDARY_Y); // grey CPU (RF-monitor noise-floor tone)
   }
   for (int i = 0; i < n; ++i) {
     lv_coord_t v = (lv_coord_t)mvs[i];
@@ -10235,7 +10249,7 @@ static void openBatteryChartWindow() {
   lv_obj_set_width(el, btxt_w);
   lv_label_set_long_mode(el, LV_LABEL_LONG_DOT);
   lv_obj_set_pos(el, 0, by);
-  by += 22;
+  by += 28;   // clear the 26-px CPU/trash button row before the full-width stats line
 
   // stats
   char sub[72];
@@ -10252,7 +10266,7 @@ static void openBatteryChartWindow() {
   lv_label_set_text(sl, sub);
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_width(sl, btxt_w);
+  lv_obj_set_width(sl, cardw - 20);          // full width — its row has no buttons, so "MHz" never wraps
   lv_label_set_long_mode(sl, LV_LABEL_LONG_DOT);
   lv_obj_set_pos(sl, 0, by);
   by += 18;
@@ -10278,7 +10292,7 @@ static void openBatteryChartWindow() {
   lv_obj_set_size(cpub, 30, 26);
   lv_obj_align(cpub, LV_ALIGN_TOP_RIGHT, -36, row_y);
   lv_obj_set_style_pad_all(cpub, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(cpub, lv_color_hex(s_batt_show_cpu ? 0x7A5311 : 0x3A3D40), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(cpub, lv_color_hex(s_batt_show_cpu ? 0x4A5256 : 0x3A3D40), LV_PART_MAIN);
   lv_obj_add_event_cb(cpub, batteryCpuToggleCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cpul = lv_label_create(cpub);
   lv_label_set_text(cpul, "CPU");
@@ -13947,6 +13961,7 @@ static lv_obj_t* s_map_info_lbl    = nullptr;   // coords read-out (bottom-left 
 static lv_obj_t* s_map_count_lbl   = nullptr;   // marker / download count (bottom-right corner)
 static lv_obj_t* s_map_status_lbl  = nullptr;
 static lv_obj_t* s_map_zoom_lbl    = nullptr;   // zoom + tile path at center (top-left, under © OSM)
+static lv_obj_t* s_map_zoom_slider = nullptr;   // zoom slider overlay (toggled by the zoom button)
 
 #if defined(ESP32)
 // Dedicated LittleFS instance for the map tile pack — mounts the "tiles"
@@ -15096,6 +15111,13 @@ static void renderMapTiles() {
                      : decodeJpegToRgb565(jpeg, jlen, &dw, &dh);
     lvglPsramFree(jpeg);
     if (!rgb) { ++n_missing; continue; }
+    // Night mode: invert the decoded RGB565 in place (render-only — the on-disk
+    // tile is untouched). ~p flips all three channels; light maps go dark.
+    if (s_map_night) {
+      uint16_t* px = (uint16_t*)rgb;
+      const int cnt = dw * dh;
+      for (int p = 0; p < cnt; ++p) px[p] = (uint16_t)~px[p];
+    }
     dst->z = s_map_zoom; dst->x = wanted[i].tx; dst->y = wanted[i].ty;
     dst->rgb565 = rgb;
     dst->w = dw; dst->h = dh;
@@ -15764,6 +15786,19 @@ static void mapOptLinesCb(lv_event_t* e) {
   renderMapMarkers();   // rebuild links to reflect the new state
 }
 
+// "Night mode" switch — invert tile colours at render time. Re-decodes the
+// visible tiles so the change is immediate, and persists the choice.
+static void mapOptNightCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_night = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetMapNight(s_map_night);
+#endif
+  freeMapTiles();        // drop cached decodes so they re-decode with the new mode
+  renderMapTiles();
+  renderMapMarkers();
+}
+
 #if defined(HAS_TDECK_GT911)
 // Map tile source toggle (in the map options popup): ON = read tiles off the microSD
 // (fully offline, no server fetch); OFF = tile server + on-device cache.
@@ -15908,13 +15943,14 @@ static void openMapOptions() {
   const lv_coord_t cardw = sw - 24;
   lv_obj_t* card = lv_obj_create(s_map_opts_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, 210);   // tall enough for the (T-Deck) SD-tiles row + About
+  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);                       // grow to the rows...
+  lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 16, LV_PART_MAIN);  // ...scroll if past the screen
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
   styleSurface(card, COLOR_PANEL, 8);
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
 
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, TR("Map options"));
@@ -15934,6 +15970,20 @@ static void openMapOptions() {
   if (s_map_show_links) lv_obj_add_state(sw_lines, LV_STATE_CHECKED);
   lv_obj_add_event_cb(sw_lines, mapOptLinesCb, LV_EVENT_VALUE_CHANGED, nullptr);
   y += 40;
+
+  // Row: Night mode (invert tile colours).
+  {
+    lv_obj_t* nl = lv_label_create(card);
+    lv_label_set_text(nl, TR("Night mode (invert)"));
+    lv_obj_set_style_text_color(nl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(nl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_pos(nl, 2, y + 4);
+    lv_obj_t* sw_night = lv_switch_create(card);
+    lv_obj_align(sw_night, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_map_night) lv_obj_add_state(sw_night, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw_night, mapOptNightCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += 40;
+  }
 
 #if defined(HAS_TDECK_GT911)
   // Row: tile source — microSD (offline) vs the tile server.
@@ -16549,6 +16599,38 @@ static void mapZoomOutCb(lv_event_t* e) {
   renderMapMarkers();
   refreshMapInfoLabel();
 }
+// Zoom slider overlay. The zoom button toggles it; dragging updates the live
+// readout, and releasing applies + persists the chosen level.
+static void mapZoomSliderCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const int z = (int)lv_slider_get_value(lv_event_get_target(e));
+  if (s_map_zoom_lbl) lv_label_set_text_fmt(s_map_zoom_lbl, "z%d", z);   // live feedback while dragging
+}
+static void mapZoomSliderReleaseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_RELEASED) return;
+  int z = (int)lv_slider_get_value(lv_event_get_target(e));
+  if (z < (int)k_map_zoom_min) z = k_map_zoom_min;
+  if (z > (int)k_map_zoom_max) z = k_map_zoom_max;
+  if ((uint8_t)z == s_map_zoom) return;
+  s_map_zoom = (uint8_t)z;
+#if defined(ESP32)
+  touchPrefsSetMapZoom(s_map_zoom);   // persist the user's choice across reboots
+#endif
+  renderMapTiles();
+  renderMapMarkers();
+  refreshMapInfoLabel();
+}
+static void mapZoomToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_map_zoom_slider) return;
+  if (lv_obj_has_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN)) {
+    lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
+    lv_obj_clear_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_map_zoom_slider);
+  } else {
+    lv_obj_add_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);
+  }
+}
 static void mapRecenterCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (!g_lv.task) return;
@@ -16590,8 +16672,13 @@ static void onMapTabActivated() {
     // around this center. After this, the user's zoom-in/out taps are honoured
     // verbatim — they can pop above the pack and see "no tile pack" (a clear
     // cue to tap − to go back).
+    // A user-saved zoom (persisted across reboots) wins over the auto-snap.
+    bool have_saved_zoom = false;
+#if defined(ESP32)
+    have_saved_zoom = (touchPrefsGetMapZoom() != 0);
+#endif
     const uint8_t best = bestAvailableZoom(s_map_center_lat, s_map_center_lon);
-    if (best != 0) s_map_zoom = best;
+    if (best != 0 && !have_saved_zoom) s_map_zoom = best;
     if (!(s_map_center_lat == 0.0 && s_map_center_lon == 0.0)) s_map_view_inited = true;
   }
   // 9 SPIFFS reads + JPEG decodes take ~1-3 seconds on first paint. Show a
@@ -16781,10 +16868,25 @@ static void makeMapTab(lv_obj_t* tab) {
   // Options gear sits at the TOP of the right-edge column; zoom/recenter below,
   // then a "contacts on map" picker (list of GPS-bearing contacts → recenter).
   make_overlay_btn(LV_SYMBOL_SETTINGS, 4,         mapOpenOptionsCb);
-  make_overlay_btn(LV_SYMBOL_PLUS,     4 + 32,    mapZoomInCb);
-  make_overlay_btn(LV_SYMBOL_MINUS,    4 + 32*2,  mapZoomOutCb);
-  make_overlay_btn(LV_SYMBOL_GPS,      4 + 32*3,  mapRecenterCb);
-  make_overlay_btn(LV_SYMBOL_LIST,     4 + 32*4,  mapOpenContactsCb);
+  make_overlay_btn(LV_SYMBOL_PLUS,     4 + 32,    mapZoomToggleCb);   // toggles the zoom slider (was +/-)
+  make_overlay_btn(LV_SYMBOL_GPS,      4 + 32*2,  mapRecenterCb);
+  make_overlay_btn(LV_SYMBOL_LIST,     4 + 32*3,  mapOpenContactsCb);
+
+  // Zoom slider — a full-width overlay along the bottom of the map, hidden until
+  // the zoom button is tapped. Reuses the control-centre brightness-slider look.
+  s_map_zoom_slider = lv_slider_create(tab);
+  lv_obj_set_size(s_map_zoom_slider, k_map_canvas_w - 24, 8);
+  lv_obj_align(s_map_zoom_slider, LV_ALIGN_BOTTOM_MID, 0, -(TABBAR_H + 8));
+  lv_slider_set_range(s_map_zoom_slider, k_map_zoom_min, k_map_zoom_max);
+  lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(s_map_zoom_slider, lv_color_hex(0x202428), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_map_zoom_slider, LV_OPA_80, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_map_zoom_slider, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(s_map_zoom_slider, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
+  lv_obj_set_style_pad_all(s_map_zoom_slider, 6, LV_PART_KNOB);
+  lv_obj_add_event_cb(s_map_zoom_slider, mapZoomSliderCb,        LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(s_map_zoom_slider, mapZoomSliderReleaseCb, LV_EVENT_RELEASED,      nullptr);
+  lv_obj_add_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);
 
   // (OSM attribution now lives in the status bar's left zone on the map tab —
   // see updateGlobalStatusBar.)
@@ -21466,8 +21568,28 @@ static void openAppDrawer() {
   }
 }
 
+// Status-bar long-hold (3 s) -> full-screen screenshot to /screenshots on SD.
+static uint32_t s_sb_press_ms  = 0;
+static bool     s_sb_shot_done = false;
+static void takeScreenshotToSd();   // fwd
+static void statusBarHoldCb(lv_event_t* e) {
+  switch (lv_event_get_code(e)) {
+    case LV_EVENT_PRESSED:   s_sb_press_ms = millis(); s_sb_shot_done = false; break;
+    case LV_EVENT_PRESSING:
+      if (!s_sb_shot_done && s_sb_press_ms && (uint32_t)(millis() - s_sb_press_ms) >= 3000) {
+        s_sb_shot_done = true;          // suppress the release CLICK (no control center)
+        takeScreenshotToSd();
+      }
+      break;
+    case LV_EVENT_RELEASED:
+    case LV_EVENT_PRESS_LOST: s_sb_press_ms = 0; break;
+    default: break;
+  }
+}
+
 static void statusBarTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // While a settings detail sheet is open the bar shows its Back chevron + title,
   // so a tap means "go back" rather than opening the control center.
   if (s_settings_sheet) {
@@ -21477,6 +21599,77 @@ static void statusBarTapCb(lv_event_t* e) {
     return;
   }
   if (s_cc_root) closeControlCenter(); else openControlCenter();
+}
+
+// Capture the composited screen to a 16-bit BMP on the SD card. BMP (no
+// compression) is the quickest viewable format to emit — rows are a direct copy
+// of the RGB565 framebuffer (LV_COLOR_16_SWAP is 0). Saved to /screenshots.
+static void takeScreenshotToSd() {
+#if defined(HAS_TDECK_GT911)
+  auto toast = [&](const char* m){ if (g_lv.task) g_lv.task->showAlert(m, 1800); };
+  if (SD.cardType() == CARD_NONE) { toast(TR("Screenshot: no SD card")); return; }
+  const int W = lv_disp_get_hor_res(nullptr);
+  const int H = lv_disp_get_ver_res(nullptr);
+  lv_color_t* buf = (lv_color_t*)heap_caps_malloc((size_t)W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  if (!buf) buf = (lv_color_t*)malloc((size_t)W * H * sizeof(lv_color_t));
+  if (!buf) { toast(TR("Screenshot: low memory")); return; }
+
+  // Mirror a forced full-screen redraw (all layers) into buf via the flush hook.
+  g_shot_w = W; g_shot_h = H; g_shot_buf = buf;
+  lv_obj_invalidate(lv_scr_act());
+  lv_obj_invalidate(lv_layer_top());
+  lv_obj_invalidate(lv_layer_sys());
+  lv_refr_now(NULL);
+  g_shot_buf = nullptr;
+
+  markSdIo();
+  SD.mkdir("/screenshots");
+  char path[48];
+  const time_t now = time(nullptr);
+  if (now > 1700000000) {
+    struct tm tmv; localtime_r(&now, &tmv);
+    strftime(path, sizeof path, "/screenshots/%Y%m%d_%H%M%S.bmp", &tmv);
+  } else {
+    snprintf(path, sizeof path, "/screenshots/up_%lu.bmp", (unsigned long)millis());
+  }
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) { free(buf); toast(TR("Screenshot: write failed")); return; }
+
+  const uint32_t row_bytes = (uint32_t)(((W * 16 + 31) / 32) * 4);   // 4-byte aligned
+  const uint32_t img_bytes = row_bytes * (uint32_t)H;
+  const uint32_t data_off  = 14u + 40u + 12u;                        // headers + RGB565 bit masks
+  uint8_t hdr[66];
+  memset(hdr, 0, sizeof hdr);
+  auto put16 = [&](int o, uint16_t v){ hdr[o] = v & 0xFF; hdr[o+1] = v >> 8; };
+  auto put32 = [&](int o, uint32_t v){ hdr[o]=v&0xFF; hdr[o+1]=(v>>8)&0xFF; hdr[o+2]=(v>>16)&0xFF; hdr[o+3]=(v>>24)&0xFF; };
+  hdr[0] = 'B'; hdr[1] = 'M';
+  put32(2, data_off + img_bytes);   // file size
+  put32(10, data_off);              // pixel data offset
+  put32(14, 40);                    // DIB header size
+  put32(18, (uint32_t)W);
+  put32(22, (uint32_t)H);           // positive = bottom-up
+  put16(26, 1);                     // planes
+  put16(28, 16);                    // bpp
+  put32(30, 3);                     // BI_BITFIELDS
+  put32(34, img_bytes);
+  put32(38, 2835); put32(42, 2835); // ~72 DPI
+  put32(54, 0x0000F800);            // red mask
+  put32(58, 0x000007E0);            // green mask
+  put32(62, 0x0000001F);            // blue mask
+  f.write(hdr, sizeof hdr);
+
+  static const uint8_t pad[4] = {0,0,0,0};
+  const uint32_t pad_n = row_bytes - (uint32_t)W * 2u;
+  for (int y = H - 1; y >= 0; --y) {                 // BMP rows are bottom-up
+    f.write((uint8_t*)(buf + (size_t)y * W), (size_t)W * 2u);
+    if (pad_n) f.write(pad, pad_n);
+  }
+  f.close();
+  free(buf);
+  toast(path);
+#else
+  if (g_lv.task) g_lv.task->showAlert(TR("Screenshot needs an SD card"), 1800);
+#endif
 }
 
 // Build the always-on status bar. Called once from UITask::begin after
@@ -21495,6 +21688,11 @@ static void buildGlobalStatusBar() {
   // clock/battery). Child labels are non-clickable, so taps reach the root.
   lv_obj_add_flag(g_statusbar.root, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(g_statusbar.root, statusBarTapCb, LV_EVENT_CLICKED, nullptr);
+  // Hold the bar for 3 s to drop a screenshot to the SD card.
+  lv_obj_add_event_cb(g_statusbar.root, statusBarHoldCb, LV_EVENT_PRESSED,    nullptr);
+  lv_obj_add_event_cb(g_statusbar.root, statusBarHoldCb, LV_EVENT_PRESSING,   nullptr);
+  lv_obj_add_event_cb(g_statusbar.root, statusBarHoldCb, LV_EVENT_RELEASED,   nullptr);
+  lv_obj_add_event_cb(g_statusbar.root, statusBarHoldCb, LV_EVENT_PRESS_LOST, nullptr);
   lv_obj_set_style_border_side(g_statusbar.root, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
   lv_obj_set_style_border_color(g_statusbar.root, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_border_opa(g_statusbar.root, LV_OPA_30, LV_PART_MAIN);
@@ -23629,6 +23827,29 @@ static void telemWinApplyCb(lv_event_t* e) {
   if (s_telem_win_past_h <= s_telem_win_now_h) s_telem_win_past_h = s_telem_win_now_h + 1;
   telemetryRebuild();
 }
+// Send a telemetry request for the window's node now (the manual Request button —
+// the window no longer auto-requests on open). Mirrors actionSheetTelemetryCb's
+// send, but drives the telemetry window's own pending/deadline state.
+static void telemetryRequestNow() {
+  if (!g_lv.task) return;
+  ContactInfo c;
+  if (!telemetryFindContact(s_telem_node, &c)) { openTelemetryWindow(s_telem_node, s_telem_name, TELEM_FAILED); return; }
+  const int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);
+  s_telem_reading[0] = '\0';
+  if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+    s_telem_manual_pending = true;
+    s_telem_deadline_ms = millis() + UI_PING_TIMEOUT_MS;
+    markMeshRequest();
+    openTelemetryWindow(s_telem_node, s_telem_name, TELEM_IN_PROGRESS);
+  } else {
+    s_telem_manual_pending = false;
+    openTelemetryWindow(s_telem_node, s_telem_name, TELEM_FAILED);
+  }
+}
+static void telemReqCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  telemetryRequestNow();
+}
 // Config panel: gear opens it, a checkbox toggles a chart series, the textfield
 // sets the auto-poll interval.
 static void telemGearCb(lv_event_t* e) {
@@ -23721,6 +23942,29 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     lv_obj_align(gl, LV_ALIGN_TOP_RIGHT, -8, 4);
   }
 
+  // Request (left of the gear) — same async-request glyph; sends a telemetry poll.
+  {
+    lv_obj_t* req = lv_obj_create(card);
+    lv_obj_remove_style_all(req);
+    lv_obj_set_size(req, 32, 32);
+    lv_obj_align(req, LV_ALIGN_TOP_RIGHT, -68, 0);
+    lv_obj_set_style_bg_opa(req, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(req, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(req, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(req, 16, LV_PART_MAIN);
+    lv_obj_add_flag(req, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(req, LV_OBJ_FLAG_FLOATING);
+    lv_obj_add_flag(req, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_clear_flag(req, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_foreground(req);
+    lv_obj_add_event_cb(req, telemReqCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* rl = lv_label_create(req);
+    lv_label_set_text(rl, LV_SYMBOL_REFRESH);
+    lv_obj_set_style_text_font(rl, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_align(rl, LV_ALIGN_TOP_RIGHT, -8, 4);
+  }
+
   // Header: name + state.
   lv_obj_t* title = lv_label_create(card);
   const char* stxt = (state == TELEM_IN_PROGRESS) ? "  \xe2\x80\x94 requesting\xe2\x80\xa6"
@@ -23728,7 +23972,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   lv_label_set_text_fmt(title, "%s%s", name && name[0] ? name : "node", stxt);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(state == TELEM_FAILED ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_width(title, cardw - 20 - 64);   // clear both the gear and the X badge
+  lv_obj_set_width(title, cardw - 20 - 98);   // clear the request, gear and X badges
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_pos(title, 0, 0);
   int y = 22;
@@ -23826,6 +24070,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     lv_label_set_recolor(lg, true);
     lv_label_set_text(lg, leg);
     lv_obj_set_style_text_font(lg, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lg, lv_color_hex(COLOR_SUB), LV_PART_MAIN);   // match the axis notes (not dark)
     lv_obj_align_to(lg, chart, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 2);
     y += chart_h + 28;   // clear the chart + its legend line
   } else {
@@ -25089,6 +25334,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     _sensors->setSettingValue("gps", "1");
   }
   s_tiles_from_sd = touchPrefsGetTilesFromSd();   // map tile source: server (default) vs microSD
+  s_map_night = touchPrefsGetMapNight();          // map night mode (render-time tile invert)
+  { const uint8_t pz = touchPrefsGetMapZoom();    // restore the last user-set map zoom
+    if (pz >= k_map_zoom_min && pz <= k_map_zoom_max) s_map_zoom = pz; }
 #if defined(ESP32)
   // Bump the CPU above the 80 MHz base-config default. The base was
   // chosen for power on a headless companion build; on a touch device

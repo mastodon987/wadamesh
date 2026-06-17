@@ -31,10 +31,13 @@ private:
   lv_color_t* buf_       = nullptr;     // canvas pixel buffer (PSRAM)
   lv_obj_t*   score_     = nullptr;
   lv_obj_t*   start_btn_ = nullptr;     // "New game" gate (deleted once tapped)
+  lv_obj_t*   pause_btn_ = nullptr;     // pause/resume toggle (shown once playing)
+  lv_obj_t*   pause_lbl_ = nullptr;     // its glyph (play <-> pause)
   lv_timer_t* timer_     = nullptr;
 
   int     cols_ = 14, rows_ = 14;       // grid dimensions (set at open)
   bool    started_ = false;             // false until "New game" is tapped
+  bool    paused_  = false;             // pause toggle (timer keeps ticking; step() no-ops)
   uint8_t bx_[kMaxCells], by_[kMaxCells];   // snake body, [0] = head
   int     len_ = 0;
   int     dx_ = 1, dy_ = 0;             // active direction
@@ -45,6 +48,7 @@ private:
 
   bool open();                          // build UI (paused); false on alloc failure
   void startGame();                     // begin the tick (from the New-game button)
+  void togglePause();                   // pause/resume the running game
   void close();
   void reset();
   void placeFood();
@@ -59,4 +63,5 @@ private:
   static void tapCb(lv_event_t* e);
   static void closeCb(lv_event_t* e);
   static void startCb(lv_event_t* e);
+  static void pauseCb(lv_event_t* e);
 };
