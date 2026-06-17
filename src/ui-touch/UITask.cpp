@@ -15849,6 +15849,7 @@ static void mapOptNightCb(lv_event_t* e) {
   freeMapTiles();        // drop cached decodes so they re-decode with the new mode
   renderMapTiles();
   renderMapMarkers();
+  applyMapChrome(true);  // re-tint the status bar + tab bar for the new tile brightness
 }
 
 #if defined(HAS_TDECK_GT911)
@@ -16776,8 +16777,11 @@ static void applyMapChrome(bool on) {
   if (g_statusbar.root) {
     lv_obj_set_style_bg_opa(g_statusbar.root, on ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(g_statusbar.root, on ? LV_OPA_TRANSP : LV_OPA_30, LV_PART_MAIN);
-    const lv_color_t fg     = lv_color_hex(on ? 0x000000 : COLOR_TEXT);
-    const lv_color_t fg_sub = lv_color_hex(on ? 0x000000 : COLOR_SUB);
+    // Night mode inverts the tiles to DARK, so the on-map chrome flips from black
+    // (legible over light tiles) to off-white (legible over the dark inverted tiles).
+    const bool night = on && s_map_night;
+    const lv_color_t fg     = lv_color_hex(!on ? COLOR_TEXT : (night ? 0xF0F0F0 : 0x000000));
+    const lv_color_t fg_sub = lv_color_hex(!on ? COLOR_SUB  : (night ? 0xC8CCD0 : 0x000000));
     if (g_statusbar.left_label) lv_obj_set_style_text_color(g_statusbar.left_label, fg, LV_PART_MAIN);
     if (g_statusbar.batt_icon)  lv_obj_set_style_text_color(g_statusbar.batt_icon, fg, LV_PART_MAIN);
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
@@ -16792,11 +16796,13 @@ static void applyMapChrome(bool on) {
       // Fully transparent on the map — the black icons read directly over the
       // map tiles, no grey bar behind them.
       lv_obj_set_style_bg_opa(btns, on ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_MAIN);
-      lv_obj_set_style_text_color(btns, lv_color_hex(on ? 0x101010 : COLOR_SUB), LV_PART_ITEMS);
-      // Off-map: active icon back to the ACCENT colour (not white). On-map: black
-      // icon for contrast over the tiles. (The accent indicator bar is hidden on
-      // the map separately by updateTabIndicator().)
-      lv_obj_set_style_text_color(btns, lv_color_hex(on ? 0x000000 : COLOR_ACCENT),
+      // Day map: black icons over light tiles. Night map: off-white over dark tiles.
+      const bool night_tabs = on && s_map_night;
+      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_SUB : (night_tabs ? 0xE6EAEE : 0x101010)), LV_PART_ITEMS);
+      // Off-map: active icon back to the ACCENT colour (not white). On-map: high-
+      // contrast icon for the tile brightness. (The accent indicator bar is hidden
+      // on the map separately by updateTabIndicator().)
+      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_ACCENT : (night_tabs ? 0xFFFFFF : 0x000000)),
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
     }
   }
