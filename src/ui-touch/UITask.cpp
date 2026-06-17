@@ -10035,6 +10035,13 @@ static void batteryClearCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   showConfirm(TR("Clear battery history?"), TR("Clear"), batteryLogClearConfirmed);
 }
+static bool s_batt_show_cpu = true;   // chart: draw the CPU-MHz series (session-scoped)
+static void batteryCpuToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_batt_show_cpu = !s_batt_show_cpu;
+  batteryChartClose();
+  openBatteryChartWindow();          // redraw immediately with the new visibility
+}
 
 // Build the 24h battery-voltage chart popup from the SD log.
 // Reformat the battery chart's primary-Y axis ticks from raw millivolts to volts
@@ -10166,7 +10173,6 @@ static void openBatteryChartWindow() {
   lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(chart, n);
   lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y,   y_bot, y_top);   // 3.4 V .. calibrated full (blue)
-  lv_chart_set_range(chart, LV_CHART_AXIS_SECONDARY_Y,   60,  260);     // CPU MHz (orange)
   lv_chart_set_div_line_count(chart, 4, 6);          // helper grid: 4 horizontal, 6 vertical
   lv_obj_set_style_bg_color(chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, LV_PART_MAIN);
@@ -10184,16 +10190,21 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2E30), LV_PART_TICKS);
   lv_obj_set_style_pad_left(chart, 4, LV_PART_TICKS);
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y,   4, 0, 4, 1, true, 40);
-  lv_chart_set_axis_tick(chart, LV_CHART_AXIS_SECONDARY_Y, 4, 0, 4, 1, true, 40);
   lv_obj_add_event_cb(chart, battChartTickCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
   lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);   // blue battery
-  lv_chart_series_t* cser = lv_chart_add_series(chart, lv_color_hex(0x7A5311), LV_CHART_AXIS_SECONDARY_Y); // dim orange CPU (half-bright, less prominent)
+  // CPU MHz series is optional (toggled by the "CPU" chip next to the trash button).
+  lv_chart_series_t* cser = nullptr;
+  if (s_batt_show_cpu) {
+    lv_chart_set_range(chart, LV_CHART_AXIS_SECONDARY_Y, 60, 260);                     // CPU MHz (orange)
+    lv_chart_set_axis_tick(chart, LV_CHART_AXIS_SECONDARY_Y, 4, 0, 4, 1, true, 40);
+    cser = lv_chart_add_series(chart, lv_color_hex(0x7A5311), LV_CHART_AXIS_SECONDARY_Y); // dim orange CPU
+  }
   for (int i = 0; i < n; ++i) {
     lv_coord_t v = (lv_coord_t)mvs[i];
     if (v > y_top) v = y_top;             // charging spike -> ride the top line
     if (v < y_bot) v = y_bot;
     lv_chart_set_next_value(chart, vser, v);
-    lv_chart_set_next_value(chart, cser, cpus[i] > 0 ? (lv_coord_t)cpus[i] : LV_CHART_POINT_NONE);
+    if (cser) lv_chart_set_next_value(chart, cser, cpus[i] > 0 ? (lv_coord_t)cpus[i] : LV_CHART_POINT_NONE);
   }
 
   // Time labels on the X (the tick mechanism counts points, not hours).
@@ -10208,13 +10219,18 @@ static void openBatteryChartWindow() {
   x_lbl("now",  LV_ALIGN_OUT_BOTTOM_RIGHT);
 
   // Bottom text, stacked so the points count gets its own line and the longer
-  // lines are width-capped to clear the bottom-right trash button.
-  const lv_coord_t btxt_w = cardw - 20 - 36;   // leave room for the trash button
+  // lines are width-capped to clear the bottom-right CPU + trash buttons.
+  const lv_coord_t btxt_w = cardw - 20 - 72;   // leave room for the CPU chip + trash button
   char sub[72];
-  snprintf(sub, sizeof sub, "now %u.%02u V (full %u.%01u)   CPU %u MHz",
-           (unsigned)(mvs[n-1] / 1000), (unsigned)((mvs[n-1] % 1000) / 10),
-           (unsigned)(y_top / 1000), (unsigned)((y_top % 1000) / 100),
-           (unsigned)getCpuFrequencyMhz());
+  if (s_batt_show_cpu)
+    snprintf(sub, sizeof sub, "now %u.%02u V (full %u.%01u)   CPU %u MHz",
+             (unsigned)(mvs[n-1] / 1000), (unsigned)((mvs[n-1] % 1000) / 10),
+             (unsigned)(y_top / 1000), (unsigned)((y_top % 1000) / 100),
+             (unsigned)getCpuFrequencyMhz());
+  else
+    snprintf(sub, sizeof sub, "now %u.%02u V (full %u.%01u)",
+             (unsigned)(mvs[n-1] / 1000), (unsigned)((mvs[n-1] % 1000) / 10),
+             (unsigned)(y_top / 1000), (unsigned)((y_top % 1000) / 100));
   lv_obj_t* sl = lv_label_create(card);
   lv_label_set_text(sl, sub);
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
@@ -10246,6 +10262,19 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
   lv_obj_add_event_cb(clr, batteryClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* clrl = lv_label_create(clr); lv_label_set_text(clrl, LV_SYMBOL_TRASH); lv_obj_center(clrl);
+
+  // Show/hide the CPU-MHz series (same size/style as the trash button, to its left).
+  lv_obj_t* cpub = lv_btn_create(card);
+  lv_obj_set_size(cpub, 30, 26);
+  lv_obj_align(cpub, LV_ALIGN_BOTTOM_RIGHT, -36, 2);
+  lv_obj_set_style_pad_all(cpub, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(cpub, lv_color_hex(s_batt_show_cpu ? 0x7A5311 : 0x3A3D40), LV_PART_MAIN);
+  lv_obj_add_event_cb(cpub, batteryCpuToggleCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* cpul = lv_label_create(cpub);
+  lv_label_set_text(cpul, "CPU");
+  lv_obj_set_style_text_font(cpul, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cpul, lv_color_hex(s_batt_show_cpu ? 0xFFFFFF : COLOR_SUB), LV_PART_MAIN);
+  lv_obj_center(cpul);
 }
 
 static void batteryTapCb(lv_event_t* e) {
@@ -23479,8 +23508,18 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
 // screen until tapped away and can scroll if it's long. Tap the dimmed backdrop
 // to close.
 #if defined(HAS_TDECK_GT911)   // telemetry window + per-node log/poll are SD-backed (T-Deck only)
-static lv_obj_t* s_telemetry_root = nullptr;
+static lv_obj_t* s_telemetry_root    = nullptr;
+static lv_obj_t* s_telem_config_root = nullptr;   // settings panel spawned on top
+static lv_obj_t* s_telem_poll_ta     = nullptr;   // auto-poll interval input (config panel)
+static bool      s_telem_show_batt   = true;      // chart series visibility (session-scoped)
+static bool      s_telem_show_temp   = true;
+static bool      s_telem_show_hum    = true;
+static void openTelemetryConfigWindow();          // fwd
+static void telemetryConfigClose() {
+  if (s_telem_config_root) { lv_obj_del(s_telem_config_root); s_telem_config_root = nullptr; s_telem_poll_ta = nullptr; }
+}
 static void telemetryClose() {
+  telemetryConfigClose();
   if (s_telemetry_root) { lv_obj_del(s_telemetry_root); s_telemetry_root = nullptr; }
 }
 static void telemetryWindowDismissCb(lv_event_t* e) {
@@ -23491,7 +23530,6 @@ static void telemetryCloseCb(lv_event_t* e) { (void)e; telemetryClose(); }   // 
 // ---------- Telemetry auto-poll (per node; persisted /telemetry/poll.cfg) ----------
 struct TelemPoll { uint8_t key[6]; uint16_t interval_min; uint32_t next_ms; bool used; };
 static const int      k_telem_poll_max = 8;
-static const uint16_t k_telem_intervals[] = { 1, 5, 15, 30, 60, 120 };
 static TelemPoll      s_telem_poll[k_telem_poll_max];
 static bool           s_telem_poll_loaded = false;
 
@@ -23571,6 +23609,7 @@ static lv_obj_t* s_telem_now_ta  = nullptr;
 static lv_obj_t* s_telem_past_ta = nullptr;
 static void telemetryRebuild() {
   openTelemetryWindow(s_telem_node, s_telem_name, s_telem_state);
+  if (s_telem_config_root) lv_obj_move_foreground(s_telem_config_root);   // keep the panel on top
 }
 static void telemWinApplyCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -23580,21 +23619,34 @@ static void telemWinApplyCb(lv_event_t* e) {
   if (s_telem_win_past_h <= s_telem_win_now_h) s_telem_win_past_h = s_telem_win_now_h + 1;
   telemetryRebuild();
 }
-static void telemPollToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  telemetryPollSet(s_telem_node, on ? 15 : 0);     // default 15 min on enable
+// Config panel: gear opens it, a checkbox toggles a chart series, the textfield
+// sets the auto-poll interval.
+static void telemGearCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  openTelemetryConfigWindow();
+}
+static void telemCfgDismissCb(lv_event_t* e) {
+  if (lv_event_get_target(e) != s_telem_config_root) return;   // backdrop only
+  telemetryConfigClose();
   telemetryRebuild();
 }
-static void telemPollIntervalCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  const int cur = telemetryPollGet(s_telem_node);
-  if (cur <= 0) return;
-  const int cnt = (int)(sizeof k_telem_intervals / sizeof k_telem_intervals[0]);
-  int ni = 0;
-  for (int i = 0; i < cnt; ++i) if (k_telem_intervals[i] == cur) ni = (i + 1) % cnt;
-  telemetryPollSet(s_telem_node, k_telem_intervals[ni]);
+static void telemCfgCloseCb(lv_event_t* e) {
+  (void)e;
+  telemetryConfigClose();
   telemetryRebuild();
+}
+static void telemShowToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  bool* flag = (bool*)lv_event_get_user_data(e);
+  if (flag) *flag = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  telemetryRebuild();      // redraw the chart immediately; the panel stays on top
+}
+static void telemPollApplyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  int mins = s_telem_poll_ta ? atoi(lv_textarea_get_text(s_telem_poll_ta)) : 0;
+  if (mins < 0)    mins = 0;
+  if (mins > 1440) mins = 1440;
+  telemetryPollSet(s_telem_node, mins);   // 0 disables auto-poll for this node
 }
 static void telemClearConfirmed() {
   char path[40]; telemetryNodePath(s_telem_node, path, sizeof path);
@@ -23636,6 +23688,29 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
   addCloseXBadge(card, telemetryCloseCb);
 
+  // Gear (left of the X) opens the settings panel: show/hide data, auto-poll, clear.
+  {
+    lv_obj_t* gear = lv_obj_create(card);
+    lv_obj_remove_style_all(gear);
+    lv_obj_set_size(gear, 32, 32);
+    lv_obj_align(gear, LV_ALIGN_TOP_RIGHT, -34, 0);
+    lv_obj_set_style_bg_opa(gear, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(gear, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(gear, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(gear, 16, LV_PART_MAIN);
+    lv_obj_add_flag(gear, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(gear, LV_OBJ_FLAG_FLOATING);
+    lv_obj_add_flag(gear, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_clear_flag(gear, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_foreground(gear);
+    lv_obj_add_event_cb(gear, telemGearCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* gl = lv_label_create(gear);
+    lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_font(gl, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(gl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(gl, LV_ALIGN_TOP_RIGHT, -8, 4);
+  }
+
   // Header: name + state.
   lv_obj_t* title = lv_label_create(card);
   const char* stxt = (state == TELEM_IN_PROGRESS) ? "  \xe2\x80\x94 requesting\xe2\x80\xa6"
@@ -23643,7 +23718,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   lv_label_set_text_fmt(title, "%s%s", name && name[0] ? name : "node", stxt);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(state == TELEM_FAILED ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_width(title, cardw - 20 - 30);
+  lv_obj_set_width(title, cardw - 20 - 64);   // clear both the gear and the X badge
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_pos(title, 0, 0);
   int y = 22;
@@ -23655,7 +23730,8 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(rl, 0, y);
-    y += 18;
+    lv_obj_update_layout(rl);                  // measure the wrapped height so the chart clears it
+    y += lv_obj_get_height(rl) + 6;
   }
 
   // ---- Read the per-node log into the chosen display window ----
@@ -23721,22 +23797,27 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y,   4, 0, 4, 1, true, 40);
     lv_chart_set_axis_tick(chart, LV_CHART_AXIS_SECONDARY_Y, 4, 0, 4, 1, true, 36);
     lv_obj_add_event_cb(chart, battChartTickCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);   // primary -> volts
-    lv_chart_series_t* bs = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);    // battery blue
-    lv_chart_series_t* ts = lv_chart_add_series(chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);  // temp orange
-    lv_chart_series_t* hs = lv_chart_add_series(chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_SECONDARY_Y);  // humidity cyan
+    // Only the series the user opted to show (toggled in the settings panel).
+    lv_chart_series_t* bs = s_telem_show_batt ? lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y)   : nullptr;  // battery blue
+    lv_chart_series_t* ts = s_telem_show_temp ? lv_chart_add_series(chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y) : nullptr;  // temp orange
+    lv_chart_series_t* hs = s_telem_show_hum  ? lv_chart_add_series(chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_SECONDARY_Y) : nullptr;  // humidity cyan
     for (int i = 0; i < n; ++i) {
-      lv_coord_t v = (lv_coord_t)mvs[i]; if (v > 4700) v = 4700;
-      lv_chart_set_next_value(chart, bs, mvs[i] > 0   ? v : LV_CHART_POINT_NONE);
-      lv_chart_set_next_value(chart, ts, t10s[i] > -3000 ? (lv_coord_t)(t10s[i] / 10) : LV_CHART_POINT_NONE);
-      lv_chart_set_next_value(chart, hs, hums[i] >= 0     ? (lv_coord_t)hums[i] : LV_CHART_POINT_NONE);
+      if (bs) { lv_coord_t v = (lv_coord_t)mvs[i]; if (v > 4700) v = 4700; lv_chart_set_next_value(chart, bs, mvs[i] > 0 ? v : LV_CHART_POINT_NONE); }
+      if (ts)   lv_chart_set_next_value(chart, ts, t10s[i] > -3000 ? (lv_coord_t)(t10s[i] / 10) : LV_CHART_POINT_NONE);
+      if (hs)   lv_chart_set_next_value(chart, hs, hums[i] >= 0     ? (lv_coord_t)hums[i] : LV_CHART_POINT_NONE);
     }
-    // legend
+    // legend (only the visible series)
+    char leg[112]; leg[0] = '\0';
+    if (s_telem_show_batt) strcat(leg, "#4F9DF7 \xe2\x97\x8f# V   ");
+    if (s_telem_show_temp) strcat(leg, "#F5A623 \xe2\x97\x8f# \xc2\xb0""C   ");
+    if (s_telem_show_hum)  strcat(leg, "#35C9C9 \xe2\x97\x8f# %RH");
+    if (!leg[0]) strcpy(leg, "#808080 (nothing shown \xe2\x80\x94 enable a series in settings)#");
     lv_obj_t* lg = lv_label_create(card);
     lv_label_set_recolor(lg, true);
-    lv_label_set_text(lg, "#4F9DF7 \xe2\x97\x8f# V   #F5A623 \xe2\x97\x8f# \xc2\xb0""C   #35C9C9 \xe2\x97\x8f# %RH");
+    lv_label_set_text(lg, leg);
     lv_obj_set_style_text_font(lg, &g_font_12, LV_PART_MAIN);
     lv_obj_align_to(lg, chart, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 2);
-    y += chart_h + 18;
+    y += chart_h + 28;   // clear the chart + its legend line
   } else {
     lv_obj_t* none = lv_label_create(card);
     lv_label_set_text(none, TR("No telemetry in this window.\nRequest one, or widen the range below."));
@@ -23746,73 +23827,157 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     y += 44;
   }
 
-  // ---- Display-window fields: "to" (h ago, newer) .. "from" (h ago, older) ----
+  // ---- Display-window fields: description on its own line, inputs on the next ----
+  // "from" = older bound (larger hours-ago), "to" = newer bound (smaller). Auto-poll,
+  // visibility toggles and clear-history all live in the settings panel (gear).
   {
     lv_obj_t* lab = lv_label_create(card);
-    lv_label_set_text(lab, TR("Window  now-"));
+    lv_label_set_text(lab, TR("Time range (hours ago)"));
     lv_obj_set_style_text_font(lab, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_pos(lab, 0, y + 6);
-    s_telem_now_ta = lv_textarea_create(card);
-    lv_textarea_set_one_line(s_telem_now_ta, true);
-    lv_textarea_set_accepted_chars(s_telem_now_ta, "0123456789");
-    lv_textarea_set_max_length(s_telem_now_ta, 4);
-    lv_textarea_set_text(s_telem_now_ta, "0");
-    lv_obj_set_width(s_telem_now_ta, 44); lv_obj_set_pos(s_telem_now_ta, 70, y);
-    attachSettingsTaEvents(s_telem_now_ta);
-    char b0[8]; snprintf(b0, sizeof b0, "%d", s_telem_win_now_h); lv_textarea_set_text(s_telem_now_ta, b0);
-    lv_obj_t* lab2 = lv_label_create(card);
-    lv_label_set_text(lab2, TR("h .. now-"));
-    lv_obj_set_style_text_font(lab2, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(lab2, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_pos(lab2, 120, y + 6);
+    lv_obj_set_pos(lab, 0, y);
+    y += 18;
+
+    lv_obj_t* lf = lv_label_create(card);
+    lv_label_set_text(lf, TR("from"));
+    lv_obj_set_style_text_font(lf, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lf, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(lf, 0, y + 8);
     s_telem_past_ta = lv_textarea_create(card);
     lv_textarea_set_one_line(s_telem_past_ta, true);
     lv_textarea_set_accepted_chars(s_telem_past_ta, "0123456789");
     lv_textarea_set_max_length(s_telem_past_ta, 4);
-    lv_obj_set_width(s_telem_past_ta, 44); lv_obj_set_pos(s_telem_past_ta, 180, y);
+    lv_obj_set_width(s_telem_past_ta, 44); lv_obj_set_pos(s_telem_past_ta, 38, y);
     attachSettingsTaEvents(s_telem_past_ta);
     char b1[8]; snprintf(b1, sizeof b1, "%d", s_telem_win_past_h); lv_textarea_set_text(s_telem_past_ta, b1);
+
+    lv_obj_t* lt = lv_label_create(card);
+    lv_label_set_text(lt, TR("h  to"));
+    lv_obj_set_style_text_font(lt, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lt, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(lt, 88, y + 8);
+    s_telem_now_ta = lv_textarea_create(card);
+    lv_textarea_set_one_line(s_telem_now_ta, true);
+    lv_textarea_set_accepted_chars(s_telem_now_ta, "0123456789");
+    lv_textarea_set_max_length(s_telem_now_ta, 4);
+    lv_obj_set_width(s_telem_now_ta, 44); lv_obj_set_pos(s_telem_now_ta, 132, y);
+    attachSettingsTaEvents(s_telem_now_ta);
+    char b0[8]; snprintf(b0, sizeof b0, "%d", s_telem_win_now_h); lv_textarea_set_text(s_telem_now_ta, b0);
+
+    lv_obj_t* lh = lv_label_create(card);
+    lv_label_set_text(lh, TR("h"));
+    lv_obj_set_style_text_font(lh, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lh, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(lh, 182, y + 8);
+
     lv_obj_t* showb = lv_btn_create(card);
-    lv_obj_set_size(showb, 56, 30); lv_obj_set_pos(showb, 230, y);
+    lv_obj_set_size(showb, 64, 32); lv_obj_set_pos(showb, 200, y);
     styleButton(showb);
     lv_obj_add_event_cb(showb, telemWinApplyCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(showb); lv_label_set_text(sl, TR("Show")); lv_obj_center(sl);
-    y += 40;
+    y += 42;
   }
+}
 
-  // ---- Auto-poll: switch + interval (1/5/15/30/60/120 min) ----
-  {
-    const int pmin = telemetryPollGet(s_telem_node);
-    lv_obj_t* pl = lv_label_create(card);
-    lv_label_set_text(pl, TR("Auto-poll"));
-    lv_obj_set_style_text_font(pl, &g_font_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_pos(pl, 0, y + 6);
-    lv_obj_t* sw_p = lv_switch_create(card);
-    lv_obj_set_pos(sw_p, 80, y);
-    if (pmin > 0) lv_obj_add_state(sw_p, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw_p, telemPollToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    if (pmin > 0) {
-      lv_obj_t* ib = lv_btn_create(card);
-      lv_obj_set_size(ib, 88, 30); lv_obj_set_pos(ib, 150, y);
-      styleButton(ib);
-      lv_obj_add_event_cb(ib, telemPollIntervalCb, LV_EVENT_CLICKED, nullptr);
-      lv_obj_t* il = lv_label_create(ib); lv_label_set_text_fmt(il, "every %d min", pmin); lv_obj_center(il);
-    }
-    y += 40;
-  }
+// Settings panel for the telemetry window: which series to chart, the auto-poll
+// interval (manual minutes; 0 = off), and a clear-history button. Spawned on top
+// of the telemetry window; toggling a checkbox redraws the chart underneath live.
+static void openTelemetryConfigWindow() {
+  if (s_telem_config_root) { lv_obj_del(s_telem_config_root); s_telem_config_root = nullptr; s_telem_poll_ta = nullptr; }
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_telem_config_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_telem_config_root);
+  lv_obj_set_size(s_telem_config_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_telem_config_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_telem_config_root, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_telem_config_root, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_telem_config_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_telem_config_root, telemCfgDismissCb, LV_EVENT_CLICKED, nullptr);
 
-  // ---- Clear this node's telemetry history ----
-  {
-    lv_obj_t* cb = lv_btn_create(card);
-    lv_obj_set_size(cb, cardw - 24, 32); lv_obj_set_pos(cb, 0, y);
-    styleButton(cb);
-    lv_obj_set_style_bg_color(cb, lv_color_hex(0xB23A48), LV_PART_MAIN);
-    lv_obj_add_event_cb(cb, telemClearCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* cl = lv_label_create(cb); lv_label_set_text(cl, LV_SYMBOL_TRASH "  Clear history"); lv_obj_center(cl);
-    y += 40;
-  }
+  const lv_coord_t cardw = sw - 48;
+  lv_obj_t* card = lv_obj_create(s_telem_config_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 24, LV_PART_MAIN);
+  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 16);
+  styleSurface(card, COLOR_PANEL, 8);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  addCloseXBadge(card, telemCfgCloseCb);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Telemetry settings"));
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(title, 0, 0);
+  int y = 30;
+
+  // --- Show on chart (checkboxes) ---
+  lv_obj_t* sh1 = lv_label_create(card);
+  lv_label_set_text(sh1, TR("Show on chart"));
+  lv_obj_set_style_text_font(sh1, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sh1, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(sh1, 0, y);
+  y += 18;
+
+  auto add_check = [&](const char* txt, bool* flag) {
+    lv_obj_t* cb = lv_checkbox_create(card);
+    lv_checkbox_set_text(cb, txt);
+    lv_obj_set_style_text_color(cb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(cb, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_radius(cb, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_border_color(cb, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_border_width(cb, 1, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(cb, lv_color_hex(0x4F9DF7), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(cb, LV_OPA_COVER, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(cb, lv_color_white(), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    if (*flag) lv_obj_add_state(cb, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(cb, telemShowToggleCb, LV_EVENT_VALUE_CHANGED, flag);
+    lv_obj_set_pos(cb, 4, y);
+    y += 30;
+  };
+  add_check(TR("Battery (V)"),  &s_telem_show_batt);
+  add_check(TR("Temperature"),  &s_telem_show_temp);
+  add_check(TR("Humidity"),     &s_telem_show_hum);
+  y += 6;
+
+  // --- Auto-poll (manual minutes; 0 = off) ---
+  lv_obj_t* sh2 = lv_label_create(card);
+  lv_label_set_text(sh2, TR("Auto-poll every"));
+  lv_obj_set_style_text_font(sh2, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sh2, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(sh2, 0, y + 8);
+  s_telem_poll_ta = lv_textarea_create(card);
+  lv_textarea_set_one_line(s_telem_poll_ta, true);
+  lv_textarea_set_accepted_chars(s_telem_poll_ta, "0123456789");
+  lv_textarea_set_max_length(s_telem_poll_ta, 4);
+  lv_obj_set_width(s_telem_poll_ta, 56); lv_obj_set_pos(s_telem_poll_ta, 120, y);
+  attachSettingsTaEvents(s_telem_poll_ta);
+  { char pb[8]; snprintf(pb, sizeof pb, "%d", telemetryPollGet(s_telem_node)); lv_textarea_set_text(s_telem_poll_ta, pb); }
+  lv_obj_t* mlab = lv_label_create(card);
+  lv_label_set_text(mlab, TR("min (0=off)"));
+  lv_obj_set_style_text_font(mlab, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(mlab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(mlab, 182, y + 8);
+  lv_obj_t* ap = lv_btn_create(card);
+  lv_obj_set_size(ap, cardw - 24, 32); lv_obj_set_pos(ap, 0, y + 42);
+  styleButton(ap);
+  lv_obj_set_style_bg_color(ap, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(ap, LV_OPA_40, LV_PART_MAIN);
+  lv_obj_add_event_cb(ap, telemPollApplyCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* apl = lv_label_create(ap); lv_label_set_text(apl, TR("Apply auto-poll")); lv_obj_center(apl);
+  y += 86;
+
+  // --- Clear history ---
+  lv_obj_t* clr = lv_btn_create(card);
+  lv_obj_set_size(clr, cardw - 24, 32); lv_obj_set_pos(clr, 0, y);
+  styleButton(clr);
+  lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
+  lv_obj_add_event_cb(clr, telemClearCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* cl = lv_label_create(clr); lv_label_set_text(cl, LV_SYMBOL_TRASH "  Clear history"); lv_obj_center(cl);
 }
 #endif  // HAS_TDECK_GT911 (telemetry window)
 
