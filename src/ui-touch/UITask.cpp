@@ -10061,36 +10061,53 @@ static void openBatteryChartWindow() {
     return;
   }
 
+  // Battery range: bottom ~3.4 V, top = the calibrated 100% voltage (Settings ->
+  // battery full). CPU on the secondary axis.
+  const uint16_t full_mv = batteryFullMv();
+  const lv_coord_t y_top = (lv_coord_t)(full_mv < 3500 ? 4200 : full_mv);
   // Chart inset so the axis labels (V left, MHz right) have room.
-  const int chart_x = 24, chart_rpad = 26, chart_y = 24, chart_h = 120;
+  const int chart_x = 28, chart_rpad = 26, chart_y = 22, chart_h = 116;
   lv_obj_t* chart = lv_chart_create(card);
   lv_obj_set_size(chart, cardw - 20 - chart_x - chart_rpad, chart_h);
   lv_obj_align(chart, LV_ALIGN_TOP_LEFT, chart_x, chart_y);
   lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(chart, n);
-  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y,   3200, 4700);   // 3.2 V .. 4.7 V (green)
-  lv_chart_set_range(chart, LV_CHART_AXIS_SECONDARY_Y,   60,  260);   // CPU MHz (orange)
-  lv_chart_set_div_line_count(chart, 4, 6);          // 4 voltage lines, 6 time lines
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y,   3400, y_top);   // 3.4 V .. calibrated full (blue)
+  lv_chart_set_range(chart, LV_CHART_AXIS_SECONDARY_Y,   60,  260);    // CPU MHz (orange)
+  lv_chart_set_div_line_count(chart, 0, 0);          // no grid — per-point value labels instead
   lv_obj_set_style_bg_color(chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_border_color(chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_border_opa(chart, LV_OPA_30, LV_PART_MAIN);
   lv_obj_set_style_border_width(chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(chart, 6, LV_PART_MAIN);
-  // Lighter grid lines (div lines use the chart's MAIN line style).
-  lv_obj_set_style_line_color(chart, lv_color_hex(0x3A3F45), LV_PART_MAIN);
-  lv_obj_set_style_line_opa(chart, LV_OPA_30, LV_PART_MAIN);
-  lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
-  // Point dots so a single sample (or sparse data) is visible, not just a line.
-  lv_obj_set_style_size(chart, 2, LV_PART_INDICATOR);
-  lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(COLOR_STATUS_OK), LV_CHART_AXIS_PRIMARY_Y);
-  lv_chart_series_t* cser = lv_chart_add_series(chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);  // orange CPU
+  // Clearly visible point markers, drawn on top of the line.
+  lv_obj_set_style_size(chart, 4, LV_PART_INDICATOR);
+  lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);   // blue battery
+  lv_chart_series_t* cser = lv_chart_add_series(chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y); // orange CPU
   for (int i = 0; i < n; ++i) {
     lv_chart_set_next_value(chart, vser, (lv_coord_t)mvs[i]);
     lv_chart_set_next_value(chart, cser, cpus[i] > 0 ? (lv_coord_t)cpus[i] : LV_CHART_POINT_NONE);
   }
+  lv_obj_update_layout(chart);   // compute point positions before we query them
 
-  // Axis notes: voltage (green) on the left, CPU MHz (orange) on the right, time on the X.
+  // A small voltage label under each battery point. Thinned to ~>=28 px apart so
+  // a dense 24h window doesn't turn into overlapping text.
+  {
+    const int chart_w = lv_obj_get_width(chart);
+    const int spacing = (n > 1) ? (chart_w / (n - 1)) : chart_w;
+    int stride = 1; while (spacing * stride < 28) ++stride;
+    for (int i = 0; i < n; i += stride) {
+      lv_point_t p; lv_chart_get_point_pos_by_id(chart, vser, (uint16_t)i, &p);
+      lv_obj_t* vl = lv_label_create(card);
+      lv_label_set_text_fmt(vl, "%u.%02u", (unsigned)(mvs[i] / 1000), (unsigned)((mvs[i] % 1000) / 10));
+      lv_obj_set_style_text_font(vl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(vl, lv_color_hex(0x9FC6F0), LV_PART_MAIN);   // pale blue
+      lv_obj_align_to(vl, chart, LV_ALIGN_TOP_LEFT, p.x - 9, p.y + 5);
+    }
+  }
+
+  // Axis notes: battery V (blue) left, CPU MHz (orange) right, time on the X.
   auto axis_lbl = [&](const char* txt, uint32_t color, lv_align_t al, int xo, int yo) {
     lv_obj_t* l = lv_label_create(card);
     lv_label_set_text(l, txt);
@@ -10098,12 +10115,13 @@ static void openBatteryChartWindow() {
     lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
     lv_obj_align_to(l, chart, al, xo, yo);
   };
-  axis_lbl("4.7V", COLOR_STATUS_OK, LV_ALIGN_OUT_LEFT_TOP,     -2, 0);
-  axis_lbl("3.2V", COLOR_STATUS_OK, LV_ALIGN_OUT_LEFT_BOTTOM,  -2, -8);
-  axis_lbl("260",  0xF5A623,        LV_ALIGN_OUT_RIGHT_TOP,     2, 0);
-  axis_lbl("60",   0xF5A623,        LV_ALIGN_OUT_RIGHT_BOTTOM,  2, -8);
-  axis_lbl("-24h", COLOR_SUB,       LV_ALIGN_OUT_BOTTOM_LEFT,   0, 2);
-  axis_lbl("now",  COLOR_SUB,       LV_ALIGN_OUT_BOTTOM_RIGHT,  0, 2);
+  char vtop[8]; snprintf(vtop, sizeof vtop, "%u.%01uV", (unsigned)(y_top / 1000), (unsigned)((y_top % 1000) / 100));
+  axis_lbl(vtop,   0x4F9DF7, LV_ALIGN_OUT_LEFT_TOP,     -2, 0);
+  axis_lbl("3.4V", 0x4F9DF7, LV_ALIGN_OUT_LEFT_BOTTOM,  -2, -8);
+  axis_lbl("260",  0xF5A623, LV_ALIGN_OUT_RIGHT_TOP,     2, 0);
+  axis_lbl("60",   0xF5A623, LV_ALIGN_OUT_RIGHT_BOTTOM,  2, -8);
+  axis_lbl("-24h", COLOR_SUB, LV_ALIGN_OUT_BOTTOM_LEFT,  0, 2);
+  axis_lbl("now",  COLOR_SUB, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 2);
 
   char sub[80];
   snprintf(sub, sizeof sub, "now %u.%02u V   CPU %u MHz   %d samples",
