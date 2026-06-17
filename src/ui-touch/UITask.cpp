@@ -11337,6 +11337,7 @@ static void fmNewFileApply(const char* name) {
 // Stream a single file src -> dst (any fs to any fs). feedLoopWDT each chunk so
 // a large file can't trip the watchdog mid-copy.
 static bool fmCopyFile(fs::FS* sf, const char* sp, fs::FS* df, const char* dp) {
+  if (sf == &SD || df == &SD) markSdIo();   // copy touching the SD card -> activity LED
   File in = sf->open(sp, "r");
   if (!in) return false;
   File out = df->open(dp, "w");
@@ -11741,6 +11742,7 @@ static void fmImageRootClickCb(lv_event_t* e) {
 
 static void fmOpenImage(const char* name) {
   if (!s_fm_fs || !name || !name[0]) return;
+  fmMarkSdIo();                          // SD file read -> activity LED
   char path[200];
   fmFullPath(name, path, sizeof path);
   File f = s_fm_fs->open(path, "r");
