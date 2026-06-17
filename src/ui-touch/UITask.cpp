@@ -10048,6 +10048,38 @@ static void battChartTickCb(lv_event_t* e) {
     lv_snprintf(dsc->text, dsc->text_length, "%d.%01d",
                 (int)(dsc->value / 1000), (int)((dsc->value % 1000) / 100));
 }
+// Estimate remaining battery life from the logged samples. Charging samples
+// (mv > calibrated full) are ignored, and only the discharge segment AFTER the
+// most recent charge is used. A least-squares slope over that segment gives
+// mV/s; time-to-empty targets 3300 mV (the Li-ion empty point used by the % curve).
+static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
+                                int full_mv, char* out, size_t cap) {
+  int start = 0;
+  for (int i = 1; i < n; ++i) {
+    if ((int)mvs[i] > full_mv)                   start = i + 1;   // charging spike -> resume after
+    else if ((int)mvs[i] - (int)mvs[i - 1] >= 25) start = i;      // a >=25 mV rise = charge event
+  }
+  double sx = 0, sy = 0, sxx = 0, sxy = 0; int m = 0;
+  uint32_t t0 = 0, last_t = 0; int last_v = 0;
+  for (int i = start; i < n; ++i) {
+    if ((int)mvs[i] > full_mv) continue;         // skip any charging spikes in the window
+    if (m == 0) t0 = eps[i];
+    const double x = (double)(eps[i] - t0), y = (double)mvs[i];
+    sx += x; sy += y; sxx += x * x; sxy += x * y; ++m; last_v = mvs[i]; last_t = eps[i];
+  }
+  if (m < 3 || (last_t - t0) < 900) { snprintf(out, cap, "Battery life: gathering data\xe2\x80\xa6"); return; }
+  const double denom = (double)m * sxx - sx * sx;
+  if (denom <= 0) { snprintf(out, cap, "Battery life: \xe2\x80\x94"); return; }
+  const double slope = ((double)m * sxy - sx * sy) / denom;   // mV/s (negative = discharging)
+  if (slope >= -1e-7) { snprintf(out, cap, "Battery life: charging / steady"); return; }
+  double secs = (double)(last_v - 3300) / (-slope);
+  if (secs < 0) secs = 0;
+  long s = (long)secs;
+  const int d = (int)(s / 86400); s %= 86400;
+  const int h = (int)(s / 3600);  s %= 3600;
+  const int mn = (int)(s / 60);
+  snprintf(out, cap, "Est. life: %dd %dh %dm", d, h, mn);
+}
 static void openBatteryChartWindow() {
   if (s_batt_chart_root) return;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -10064,7 +10096,7 @@ static void openBatteryChartWindow() {
   const lv_coord_t cardw = sw - 24;
   lv_obj_t* card = lv_obj_create(s_batt_chart_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, 216);
+  lv_obj_set_size(card, cardw, 236);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
   styleSurface(card, COLOR_PANEL, 8);
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
@@ -10085,6 +10117,7 @@ static void openBatteryChartWindow() {
   static const int k_max_pts = 288;   // 24h / 5min
   static uint16_t mvs[k_max_pts];
   static uint16_t cpus[k_max_pts];
+  static uint32_t eps[k_max_pts];
   int n = 0;
   if (SD.cardType() != CARD_NONE) {
     markSdIo();
@@ -10100,6 +10133,7 @@ static void openBatteryChartWindow() {
         const int t4 = ln.indexOf('\t', t3 + 1);
         const int mv = ln.substring(t2 + 1, t3).toInt();
         if (mv <= 0) continue;
+        eps[n]  = (uint32_t)strtoul(ln.c_str(), nullptr, 10);   // first column = epoch
         mvs[n]  = (uint16_t)mv;
         cpus[n] = (uint16_t)((t4 >= 0) ? ln.substring(t4 + 1).toInt() : 0);
         ++n;
@@ -10183,6 +10217,15 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(sl, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+  // Estimated remaining battery life (discharge-rate fit over the logged window).
+  char est[44];
+  batteryEstimateText(eps, mvs, n, (int)full_mv, est, sizeof est);
+  lv_obj_t* el = lv_label_create(card);
+  lv_label_set_text(el, est);
+  lv_obj_set_style_text_font(el, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(el, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_align(el, LV_ALIGN_BOTTOM_LEFT, 0, -18);
 
   // Clear the battery history (with confirmation).
   lv_obj_t* clr = lv_btn_create(card);
