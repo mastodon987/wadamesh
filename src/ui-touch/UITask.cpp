@@ -23223,47 +23223,6 @@ bool UITask::loadHistoryFromStorage() {
     _active_thread_idx = -1;
     _active_thread_is_channel = false;
   }
-
-  // Reconcile persisted unread counts against the ring. The ring may not
-  // contain all the messages that were counted — they can be evicted between
-  // saves. Without this, any thread whose unread messages were overwritten by
-  // ring wraparound shows a permanent phantom badge with an empty chat.
-  //
-  // For each thread with unread > 0: count its incoming messages in the ring.
-  //   - Zero ring messages → unread was fully evicted; reset to 0.
-  //   - Fewer ring messages than unread → clamp unread to ring count.
-  //   - Mark the min(unread, ring_count) most recent as counted_as_unread so
-  //     future evictions correctly decrement the counter.
-  for (int t = 0; t < MAX_UI_THREADS; ++t) {
-    if (!_ui_threads[t].used || _ui_threads[t].unread == 0) continue;
-    const bool is_ch = _ui_threads[t].channel;
-    int ring_incoming = 0;
-    for (int i = 0; i < _ui_msg_count; ++i) {
-      int ri = (_ui_msg_head - 1 - i + MAX_UI_MESSAGES) % MAX_UI_MESSAGES;
-      const UIMessage& rm = _ui_msgs[ri];
-      if (!rm.outgoing && rm.channel == is_ch &&
-          strncmp(rm.thread, _ui_threads[t].name, MAX_THREAD_NAME) == 0)
-        ++ring_incoming;
-    }
-    if (ring_incoming == 0) {
-      _ui_threads[t].unread = 0;
-      _ui_threads[t].has_mention = false;
-      continue;
-    }
-    if (_ui_threads[t].unread > (uint16_t)ring_incoming)
-      _ui_threads[t].unread = (uint16_t)ring_incoming;
-    // Tag the N most-recent incoming messages for this thread.
-    int to_tag = (int)_ui_threads[t].unread;
-    for (int i = 0; i < _ui_msg_count && to_tag > 0; ++i) {
-      int ri = (_ui_msg_head - 1 - i + MAX_UI_MESSAGES) % MAX_UI_MESSAGES;
-      UIMessage& rm = _ui_msgs[ri];
-      if (!rm.outgoing && rm.channel == is_ch &&
-          strncmp(rm.thread, _ui_threads[t].name, MAX_THREAD_NAME) == 0) {
-        rm.counted_as_unread = true;
-        --to_tag;
-      }
-    }
-  }
   return true;
 #else
   return false;
@@ -23608,16 +23567,6 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
                           uint16_t in_scope) {
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
-  // When the ring is full the slot at _ui_msg_head is about to be evicted.
-  // Decrement its thread's unread counter so phantom badges don't accumulate
-  // when the 96-slot ring wraps around under heavy traffic.
-  if (_ui_msg_count == MAX_UI_MESSAGES) {
-    const UIMessage& evicting = _ui_msgs[_ui_msg_head];
-    if (evicting.counted_as_unread) {
-      int et = findThreadByName(evicting.thread, evicting.channel);
-      if (et >= 0 && _ui_threads[et].unread > 0) --_ui_threads[et].unread;
-    }
-  }
   UIMessage& m = _ui_msgs[_ui_msg_head];
   // Prefer wall-clock (RTC) over uptime — bubble timestamps want HH:MM, and
   // last_ts/sort comparisons still work since RTC epoch (~1.7e9) outranks
@@ -23646,7 +23595,6 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   m.sender[MAX_SENDER_NAME] = '\0';
   strncpy(m.text, text ? text : "", MAX_MSG_TEXT);
   m.text[MAX_MSG_TEXT] = '\0';
-  m.counted_as_unread = mark_unread && !outgoing;
   if (_ui_msg_count < MAX_UI_MESSAGES) ++_ui_msg_count;
   _ui_msg_head = (_ui_msg_head + 1) % MAX_UI_MESSAGES;
   _ui_threads[t_idx].last_ts = m.ts;
@@ -23767,12 +23715,15 @@ void UITask::setActiveThread(int idx, bool channel_mode) {
   }
   _active_thread_idx         = idx;
   _active_thread_is_channel  = channel_mode;
+  const bool was_unread = (_ui_threads[idx].unread != 0) || _ui_threads[idx].has_mention;
   // Capture the unread count for the Discord-style "new messages" divider +
   // scroll-to-divider in refreshChatDetail, before we clear it here. Both chat
   // open paths (thread list + DM-from-contacts) funnel through here.
   s_unread_at_open   = _ui_threads[idx].unread;
   s_chat_just_opened = true;
-  markThreadRead(idx);   // zeros unread/has_mention + clears ring counted_as_unread flags
+  _ui_threads[idx].unread    = 0;
+  _ui_threads[idx].has_mention = false;
+  if (was_unread) markHistoryDirty(200);   // persist the read state (survives a manual reboot)
   if (channel_mode) {
     _active_dm_contact_set = false;
     memset(_active_dm_contact_pub, 0, sizeof(_active_dm_contact_pub));
@@ -24451,15 +24402,6 @@ void UITask::markThreadRead(int idx) {
   if (_ui_threads[idx].unread == 0 && !_ui_threads[idx].has_mention) return;
   _ui_threads[idx].unread = 0;
   _ui_threads[idx].has_mention = false;
-  // Clear per-message flags so a future ring eviction of these slots doesn't
-  // decrement the (now-zero) counter below zero.
-  const bool is_ch = _ui_threads[idx].channel;
-  for (int i = 0; i < MAX_UI_MESSAGES; ++i) {
-    UIMessage& rm = _ui_msgs[i];
-    if (rm.counted_as_unread && rm.channel == is_ch &&
-        strncmp(rm.thread, _ui_threads[idx].name, MAX_THREAD_NAME) == 0)
-      rm.counted_as_unread = false;
-  }
   markHistoryDirty(200);   // persist soon (survives a manual reboot)
 }
 

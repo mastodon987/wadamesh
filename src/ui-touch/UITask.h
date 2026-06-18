@@ -71,11 +71,6 @@ public:
     uint16_t in_scope;       // transport scope (transport_codes[0]); valid iff MSG_META_HAS_SCOPE
     uint8_t  in_path_n;
     uint8_t  in_path[MAX_UI_PATH];
-    // RAM-only: true while this ring slot contributes +1 to its thread's
-    // unread counter. Cleared when the thread is marked read or this slot is
-    // evicted (ring overflow). Used to keep thread.unread in sync with the
-    // ring so a wrapped ring doesn't leave phantom badges.
-    bool     counted_as_unread = false;
     char thread[MAX_THREAD_NAME + 1];
     char sender[MAX_SENDER_NAME + 1];
     char text[MAX_MSG_TEXT + 1];
