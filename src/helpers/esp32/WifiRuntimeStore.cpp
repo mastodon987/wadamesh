@@ -177,6 +177,11 @@ bool wifiConfigConsumeApplyRequest() {
 }
 
 void wifiConfigApply() {
+#if defined(HAS_TANMATSU)
+  printf("[WIFI] apply radio_en=%d hasRuntime=%d mode=%d status=%d\n",
+         (int)wifiConfigGetRadioEnabled(), (int)wifiConfigHasRuntime(),
+         (int)WiFi.getMode(), (int)WiFi.status());
+#endif
   if (!wifiConfigGetRadioEnabled()) {
     WiFi.disconnect(true);
     delay(50);
@@ -188,9 +193,13 @@ void wifiConfigApply() {
   char pwd[WIFI_CONFIG_PWD_MAX];
   wifiConfigGetSsid(ssid, sizeof(ssid));
   wifiConfigGetPwd(pwd, sizeof(pwd));
+  WiFi.mode(WIFI_STA);            // esp_wifi_remote needs an explicit STA mode before begin()
   WiFi.disconnect();
   delay(100);
   WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+#if defined(HAS_TANMATSU)
+  printf("[WIFI] begin ssid='%s' pwlen=%d\n", ssid, (int)strlen(pwd));
+#endif
 }
 
 #endif

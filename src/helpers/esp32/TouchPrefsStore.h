@@ -108,6 +108,17 @@ bool touchPrefsSetAppGridLarge(bool on);
 bool touchPrefsGetSleepIdle();
 bool touchPrefsSetSleepIdle(bool on);
 
+/* UI resolution scale (Tanmatsu): 0=100% (native 800x480), 1=150%, 2=200%. Applied at boot —
+ * LVGL renders at a lower resolution and the flush upscales to the panel. Reboot to apply. */
+uint8_t touchPrefsGetUiScale();
+bool    touchPrefsSetUiScale(uint8_t scale);
+
+/* T-Deck trackball interaction mode: false (default) = the trackball drives a soft
+ * mouse cursor; true = D-pad focus navigation (↑↓←→ move focus, ball click = enter),
+ * like the Tanmatsu. Applied live (no reboot). */
+bool    touchPrefsGetTbKeypad();
+bool    touchPrefsSetTbKeypad(bool on);
+
 /** Hide the device/profile name in the status bar and move the clock to the
  *  left where the name used to be. Default false (name shown). */
 bool touchPrefsGetHideNodeName();
