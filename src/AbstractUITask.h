@@ -72,6 +72,20 @@ public:
     (void)is_flood; (void)snr_q4; (void)rssi;
     newMsgFromPub(path_len, from_pub, from_name, text, msgcount);
   }
+  /** Room-server post. Like newMsgFromPubWithMeta, but from_pub/from_name
+   *  identify the ROOM (the chat thread) while `author_name` is the resolved
+   *  display name of the original poster — a room signed message attributes
+   *  the author only by a pubkey prefix, never in the text body. Default
+   *  ignores the author and behaves like a normal message, so non-touch UIs
+   *  are unaffected. */
+  virtual void newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
+                                         const uint8_t* from_pub, const char* from_name,
+                                         const char* author_name,
+                                         const char* text, int msgcount,
+                                         int8_t snr_q4, int8_t rssi) {
+    (void)author_name;
+    newMsgFromPubWithMeta(path_len, is_flood, from_pub, from_name, text, msgcount, snr_q4, rssi);
+  }
   virtual void notify(UIEventType t = UIEventType::none) = 0;
   virtual void appendDiag(const char* message) { (void)message; }
   /** Notify UI of an advert reception. `is_new=true` means the contact is NOT in

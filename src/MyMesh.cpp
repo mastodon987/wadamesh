@@ -1875,7 +1875,14 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
      * serial was disconnected, which meant after a channel message arrived
      * over TCP/BLE g_last_event stayed at `channelMessage` and the next DM
      * was routed into the channel thread (or vice versa). */
-    _ui->notify(UIEventType::contactMessage);
+    // A TXT_TYPE_SIGNED_PLAIN with a 4-byte sender_prefix is a room-server
+    // post: `from` is the room (the thread) and the author is identified only
+    // by the prefix — the text is the bare body. Plain DMs/channel msgs are
+    // unchanged.
+    const bool is_room_post =
+        (txt_type == TXT_TYPE_SIGNED_PLAIN) && extra && extra_len >= 4;
+    _ui->notify(is_room_post ? UIEventType::roomMessage
+                             : UIEventType::contactMessage);
     // Pass RX metadata so the touch UI can surface it via the bubble's
     // long-press Info sheet. SNR comes off the packet itself (most accurate
     // per-message); RSSI is the radio's last-RSSI, which is current since
@@ -1885,8 +1892,29 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
     const bool   is_flood = pkt->isRouteFlood();
     uiStashRxMeta(pkt);   // capture route + scope for the per-message Info popup
     _last_sender_ts = sender_timestamp;   // embedded send-time -> UI bubble ts (room history replay)
-    _ui->newMsgFromPubWithMeta(path_len, is_flood, from.id.pub_key, from.name,
-                               text, history_count, snr_q4, rssi);
+    if (is_room_post) {
+      // Resolve the post's author from the signed message's sender_prefix.
+      // Prefer a saved contact's name; fall back to our own node name for
+      // posts we authored (replayed during sync), else a short hex of the
+      // prefix so the bubble never just shows the room's own name.
+      char author_buf[16];
+      const char* author_name;
+      ContactInfo* author = lookupContactByPubKey(extra, 4);
+      if (author && author->name[0]) {
+        author_name = author->name;
+      } else if (memcmp(extra, self_id.pub_key, 4) == 0) {
+        author_name = _prefs.node_name;
+      } else {
+        mesh::Utils::toHex(author_buf, (uint8_t*)extra, 4);
+        author_name = author_buf;
+      }
+      _ui->newRoomMsgFromPubWithMeta(path_len, is_flood, from.id.pub_key,
+                                     from.name, author_name, text,
+                                     history_count, snr_q4, rssi);
+    } else {
+      _ui->newMsgFromPubWithMeta(path_len, is_flood, from.id.pub_key, from.name,
+                                 text, history_count, snr_q4, rssi);
+    }
   }
   // CLI command replies don't belong in the chat thread but the touch UI
   // *does* want them — they're the response to whatever was typed into the

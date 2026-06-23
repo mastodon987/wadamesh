@@ -29167,9 +29167,11 @@ void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 // drift from the plain path. `meta_flags` is 0 (no RX metadata) when called
 // from base newMsg; the touch UI ignores zero-meta entries in the Info popup.
 void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* text, int msgcount,
-                        uint8_t meta_flags, int8_t snr_q4, int8_t rssi) {
+                        uint8_t meta_flags, int8_t snr_q4, int8_t rssi,
+                        const char* sender_override) {
   (void)path_len;
   _msgcount = msgcount;
+  const bool have_sender_override = (sender_override && sender_override[0]);
   bool channel = (g_last_event == UIEventType::channelMessage);
   const char* thread = channel
       ? (from_name && from_name[0] ? from_name : "#unknown")
@@ -29182,7 +29184,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   char parsed_sender[MAX_SENDER_NAME + 1];
   parsed_sender[0] = '\0';
   const char* body = text ? text : "";
-  if (channel && text) {
+  if (channel && text && !have_sender_override) {
     const char* colon = strstr(text, ": ");
     if (colon) {
       int slen = static_cast<int>(colon - text);
@@ -29193,9 +29195,11 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       }
     }
   }
-  const char* sender = channel
+  const char* sender = have_sender_override
+      ? sender_override
+      : (channel
       ? (parsed_sender[0] ? parsed_sender : (from_name && from_name[0] ? from_name : "node"))
-      : (from_name && from_name[0] ? from_name : "node");
+      : (from_name && from_name[0] ? from_name : "node"));
 
 #if defined(ESP32)
   // Blocked-by-name sender: a channel/room bot we have no pubkey to target via
@@ -29293,6 +29297,33 @@ void UITask::newMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
   newMsgImpl(path_len, from_name, text, msgcount, meta_flags, snr_q4, rssi);
   // Mirror newMsgFromPub's contact-pub plumbing so the newly-arrived DM
   // resolves back to its contact entry for replies.
+  if (!from_pub || !from_name || !from_name[0]) return;
+  const int t = findThreadByName(from_name, false);
+  if (t < 0) return;
+  _ui_threads[t].mesh_contact_idx = -1;
+  memcpy(_ui_threads[t].mesh_contact_pub, from_pub, PUB_KEY_SIZE);
+  memcpy(_ui_threads[t].mesh_contact_key6, from_pub, 6);
+  if (!_ui_threads[t].channel && t == _active_thread_idx) {
+    _active_dm_contact_set = true;
+    memcpy(_active_dm_contact_pub, from_pub, sizeof(_active_dm_contact_pub));
+  }
+  syncThreadMeshSlots(from_name, false);
+}
+
+void UITask::newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
+                                       const uint8_t* from_pub, const char* from_name,
+                                       const char* author_name,
+                                       const char* text, int msgcount,
+                                       int8_t snr_q4, int8_t rssi) {
+  if (from_pub && touchPrefsIsIgnored(from_pub)) return;   // blocked room — drop
+  const uint8_t meta_flags = MSG_META_HAS_RX | (is_flood ? MSG_META_IS_FLOOD : 0);
+  // The thread is the room (from_name); the per-message sender label is the
+  // resolved author. g_last_event is roomMessage here, so newMsgImpl keeps the
+  // thread DM-style (channel=false) — matching the thread the user opens by
+  // tapping the room contact — while the timeline shows the author label for
+  // room threads (thread_is_room).
+  newMsgImpl(path_len, from_name, text, msgcount, meta_flags, snr_q4, rssi, author_name);
+  // Map the room thread back to the room contact so replies/login resolve.
   if (!from_pub || !from_name || !from_name[0]) return;
   const int t = findThreadByName(from_name, false);
   if (t < 0) return;

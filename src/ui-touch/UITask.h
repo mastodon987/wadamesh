@@ -196,7 +196,8 @@ private:
                     uint16_t in_scope = 0);
   // Shared core for newMsg / newMsgFromPubWithMeta — see UITask.cpp.
   void newMsgImpl(uint8_t path_len, const char* from_name, const char* text, int msgcount,
-                  uint8_t meta_flags, int8_t snr_q4, int8_t rssi);
+                  uint8_t meta_flags, int8_t snr_q4, int8_t rssi,
+                  const char* sender_override = nullptr);
 public:
   /** Match an arriving ACK (4-byte hash) against the last few outgoing DMs
    *  and flip their delivery state to DELIV_DELIVERED so the chat detail
@@ -402,6 +403,11 @@ public:
                               const uint8_t* from_pub, const char* from_name,
                               const char* text, int msgcount,
                               int8_t snr_q4, int8_t rssi) override;
+  void newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
+                                 const uint8_t* from_pub, const char* from_name,
+                                 const char* author_name,
+                                 const char* text, int msgcount,
+                                 int8_t snr_q4, int8_t rssi) override;
   void notify(UIEventType t = UIEventType::none) override;
   void logRxFrame(float snr, float rssi, const uint8_t* raw, int len) override;
   void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) override;
