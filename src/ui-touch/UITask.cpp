@@ -2330,6 +2330,11 @@ static void navMaybeRebuild() {
   if (!s_nav_group) return;
   navSyncCursor();   // keep the text cursor showing only in edit mode (reliable "ready to type" cue)
   if (navOpenDropdown()) return;   // an open dropdown owns the group — rebuilding would close it
+  // Issue #45: when an overlay (settings sheet, modal) or a chat closes, the element that had focus
+  // lived inside it and is now gone, so focus would fall to the first list item and the underlying
+  // list would snap to the top. Stash the page focus on the way out, restore it on the way back.
+  static lv_obj_t* s_nav_page_focus = nullptr;
+  static bool s_nav_prev_on_page = true;
   lv_obj_t* scr = lv_scr_act();
   lv_obj_t* top = lv_layer_top();
   bool useTop = navTopHasVisibleChild(top);
@@ -2338,6 +2343,7 @@ static void navMaybeRebuild() {
   // screens) and the composer can be focused for typing.
   LvChatPanel* chat = useTop ? nullptr : navOpenChatPanel();
   lv_obj_t* root = useTop ? top : (chat ? chat->overlay : scr);
+  const bool on_page = !useTop && !chat;   // #45: true = main tab content (the list that scrolls)
   lv_obj_t* tabbar = nullptr;
   if (!useTop && !chat && g_lv.tabview) {
     // Main app: collect ONLY the active tab's content (inactive tabs are scrolled off-screen, not
@@ -2352,6 +2358,7 @@ static void navMaybeRebuild() {
   if (!s_nav_dirty && scr == s_nav_prev_scr && sig == s_nav_prev_sig) return;
   s_nav_dirty = false; s_nav_prev_scr = scr; s_nav_prev_sig = sig;
   lv_obj_t* keep = lv_group_get_focused(s_nav_group);     // preserve focus across a same-page rebuild (toggle/click)
+  if (!on_page && s_nav_prev_on_page) s_nav_page_focus = keep;   // #45: leaving the page → remember where we were
   lv_group_remove_all_objs(s_nav_group);
   s_nav_first = s_nav_last = nullptr; s_nav_count = 0;
   if (root) navCollect(root);                              // content items (focus starts here)
@@ -2367,6 +2374,11 @@ static void navMaybeRebuild() {
   // not auto-selected). Only on the open transition, so new messages don't steal focus mid-typing.
   if (chat && chat != s_nav_prev_chat && chat->composer_ta && lv_obj_is_valid(chat->composer_ta)) {
     lv_group_focus_obj(chat->composer_ta);   // chat just opened → focus the composer
+  } else if (on_page && !s_nav_prev_on_page && s_nav_page_focus && lv_obj_is_valid(s_nav_page_focus)) {
+    // #45: just returned to the page from an overlay/chat — restore the item we left from so the
+    // list stays put instead of snapping to the top.
+    const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+    for (int i = 0; i < n; i++) if (s_nav_objs[i] == s_nav_page_focus) { lv_group_focus_obj(s_nav_page_focus); break; }
   } else if (keep && lv_obj_is_valid(keep)) {
     // A toggle/click triggers a rebuild; if the previously-focused element survived,
     // keep focus on it instead of jumping back to the top of the page.
@@ -2374,6 +2386,7 @@ static void navMaybeRebuild() {
     for (int i = 0; i < n; i++) if (s_nav_objs[i] == keep) { lv_group_focus_obj(keep); break; }
   }
   s_nav_prev_chat = chat;
+  s_nav_prev_on_page = on_page;   // #45
   if (s_nav_debug) printf("[NAV] rebuilt count=%d %s tab=%d\n", s_nav_count, useTop ? "top" : chat ? "chat" : "tab", getActiveTab());
 }
 
