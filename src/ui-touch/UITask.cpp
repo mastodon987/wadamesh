@@ -21551,13 +21551,17 @@ static lv_obj_t* tbFindScrollableAt(lv_coord_t x, lv_coord_t y, float ox, float 
         if (x >= a.x1 && x <= a.x2 && y >= a.y1 && y <= a.y2) { hit = c; descend = true; break; }
       }
     }
-    if (hit == root) continue;  // nothing visible in this layer at (x,y)
+    if (hit == root) continue;  // nothing visible in this layer at (x,y), try next
+    // Something is visible in this layer — it owns the interaction. Walk up for a
+    // scrollable but do NOT fall through to a lower layer even if none is found:
+    // a modal/dialog should block scrolling of whatever is behind it.
     for (lv_obj_t* o = hit; o && o != root; o = lv_obj_get_parent(o)) {
       if (!lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE)) continue;
       bool cx = (ox > 0 && lv_obj_get_scroll_right(o) > 0) || (ox < 0 && lv_obj_get_scroll_left(o) > 0);
       bool cy = (oy > 0 && lv_obj_get_scroll_bottom(o) > 0) || (oy < 0 && lv_obj_get_scroll_top(o) > 0);
       if (cx || cy) return o;
     }
+    return nullptr;  // layer had visible content but nothing scrollable in this direction
   }
   return nullptr;
 }
