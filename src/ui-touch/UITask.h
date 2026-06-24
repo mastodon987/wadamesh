@@ -332,6 +332,35 @@ public:
   void toggleBuzzer();
   bool getGPSState();
   void toggleGPS();
+#if defined(HAS_EXPANSION_KIT)
+  // Heltec V4 Expansion Kit: snapshot of the locally-attached sensor rail
+  // (battery, BME280, GXHTV3/SHT4X) plus the GPS/buzzer module presence.
+  struct LocalEnvSnapshot {
+    bool query_ok = false;
+    bool have_batt = false;
+    float batt_v = 0.0f;
+    bool have_bme_temp = false;
+    bool have_bme_hum = false;
+    bool have_bme_pressure = false;
+    bool have_bme_alt = false;
+    float bme_temp_c = 0.0f;
+    float bme_hum_pct = 0.0f;
+    float bme_pressure_hpa = 0.0f;
+    int16_t bme_alt_m = 0;
+    bool have_gxhtv3_temp = false;
+    bool have_gxhtv3_hum = false;
+    float gxhtv3_temp_c = 0.0f;
+    float gxhtv3_hum_pct = 0.0f;
+    bool gps_present = false;
+    bool gps_enabled = false;
+    bool gps_fix = false;
+    int  gps_sats = -1;
+    bool buzzer_available = false;
+    bool buzzer_quiet = true;
+  };
+  bool getLocalEnvSnapshot(LocalEnvSnapshot& out) const;
+  bool getLocalEnvSummary(char* buf, size_t cap) const;
+#endif
   /** True if the GPS currently reports a valid fix. */
   bool getGpsFix();
   /** Satellites currently in view, or -1 if unknown / no GPS hardware. */
