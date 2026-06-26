@@ -8,6 +8,8 @@
 #include <Arduino.h>
 #include <Mesh.h>
 #include "MyMesh.h"
+#include <new>               // placement-new for the PSRAM-resident the_mesh
+#include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
 #include "UITask.h"
 #include "target.h"            // board, radio_driver, rtc_clock, display, sensors, radio_init()
 #include <SPIFFS.h>
@@ -56,7 +58,17 @@ MultiTransportCompanionInterface serial_interface;
 StdRNG fast_rng;
 SimpleMeshTables tables;
 UITask ui_task(&board, &serial_interface);
-MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store, &ui_task);
+// the_mesh (~42 KB, dominated by the MAX_CONTACTS array) lives in PSRAM instead of the
+// scarce internal DRAM — the P4 has 32 MB PSRAM. Placement-new into a heap_caps_malloc
+// block + a reference, exactly like src/main.cpp on the S3 boards: the ctor still runs
+// HERE at static-init (PSRAM is up first), so only the address moves. Internal-RAM
+// fallback if PSRAM is somehow absent. MyMesh.h declares `extern MyMesh& the_mesh`.
+static MyMesh& makeTheMesh() {
+  void* mem = heap_caps_malloc(sizeof(MyMesh), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!mem) mem = malloc(sizeof(MyMesh));
+  return *new (mem) MyMesh(radio_driver, fast_rng, rtc_clock, tables, store, &ui_task);
+}
+MyMesh& the_mesh = makeTheMesh();
 
 // ---------------------------------------------------------------------------
 // Boot splash — a tiny on-screen console so launching the app shows progress
