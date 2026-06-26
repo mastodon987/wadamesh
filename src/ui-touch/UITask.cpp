@@ -2006,6 +2006,7 @@ static bool      s_nav_show     = false;       // T-Deck: focus-visible — pain
 // bubble right after it correctly landed at the bottom). This flag makes navFocusCb skip the
 // scroll-into-view during a rebuild; direct arrow-nav (focus set OUTSIDE a rebuild) still scrolls.
 static bool      s_nav_suppress_scroll = false;
+static lv_obj_t* s_nav_focus_hint = nullptr;   // one-shot: focus this object on the next rebuild (#45)
 static void goToTab(int idx);                  // (defined far below) tab switch + refresh
 static int  getActiveTab();                    // (defined below) current tabview index
 #if defined(HAS_TANMATSU)
@@ -2915,7 +2916,13 @@ static void navMaybeRebuild() {
   // When a chat just opened, drop focus on its composer so typing goes straight in (issue: textfield
   // not auto-selected). Only on the open transition, so new messages don't steal focus mid-typing.
   bool focus_set = false;   // true once we deliberately focus a COLLECTED obj (else LVGL defaults to the first item)
-  if (chat && chat != s_nav_prev_chat && chat->composer_ta && lv_obj_is_valid(chat->composer_ta)) {
+  if (s_nav_focus_hint && lv_obj_is_valid(s_nav_focus_hint)) {
+    // One-shot explicit focus hint — e.g. turning keyboard-nav ON keeps the highlight on the switch you
+    // just toggled instead of snapping the settings list to the top (issue #45).
+    const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+    for (int i = 0; i < n; i++) if (s_nav_objs[i] == s_nav_focus_hint) { lv_group_focus_obj(s_nav_focus_hint); focus_set = true; break; }
+    s_nav_focus_hint = nullptr;   // consume regardless (one-shot)
+  } else if (chat && chat != s_nav_prev_chat && chat->composer_ta && lv_obj_is_valid(chat->composer_ta)) {
     lv_group_focus_obj(chat->composer_ta);   // chat just opened → focus the composer
     focus_set = true;
   } else if (on_page && !s_nav_prev_on_page && s_nav_page_focus && lv_obj_is_valid(s_nav_page_focus)) {
@@ -7905,7 +7912,12 @@ static void kbdNavToggleCb(lv_event_t* e) {
   touchPrefsSetKbdNav(on);
 #endif
   s_kbd_nav = on;
-  if (!on) {
+  if (on) {
+    // #45: turning nav ON rebuilds the focus group; with no prior focus to keep it lands on the FIRST
+    // item and the settings list snaps to the top. Pin focus to the switch you just toggled instead.
+    s_nav_focus_hint = lv_event_get_target(e);
+    navMarkDirty();                                                  // force the rebuild that consumes the hint
+  } else {
     navHideFocus();                                                  // clear + hide the focus highlight
     if (s_nav_group) { lv_group_remove_all_objs(s_nav_group); navMarkDirty(); }
   }
