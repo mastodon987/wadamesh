@@ -951,4 +951,8 @@ private:
   uint32_t _ui_trace_ping_tag = 0;
 };
 
+#if defined(ESP32_PLATFORM)
+extern MyMesh& the_mesh;   // PSRAM-resident (placement-new'd in main.cpp); reference keeps call sites unchanged
+#else
 extern MyMesh the_mesh;
+#endif

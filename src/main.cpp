@@ -1,6 +1,10 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
 #include "MyMesh.h"
+#if defined(ESP32_PLATFORM)
+  #include <new>               // placement-new for the PSRAM-resident the_mesh
+  #include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
+#endif
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
 #include <Preferences.h>
 #include <esp_system.h>
@@ -127,11 +131,31 @@ static uint32_t _atoi(const char* sp) {
 
 StdRNG fast_rng;
 SimpleMeshTables tables;
+#if defined(ESP32_PLATFORM)
+// the_mesh is ~42 KB (dominated by the MAX_CONTACTS ContactInfo array) and was the
+// single biggest static internal-DRAM consumer. Place the whole object in PSRAM —
+// the contacts array rides along inside it — and bind a reference so every
+// `the_mesh.foo()` call site is unchanged. The constructor still runs HERE at
+// static-init (PSRAM is already up; the UITask psAlloc statics rely on the same),
+// so timing/behaviour are identical to the old direct global — only the address
+// moves off internal DRAM. heap_caps falls back to internal RAM if PSRAM is absent.
+static MyMesh& makeTheMesh() {
+  void* mem = heap_caps_malloc(sizeof(MyMesh), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!mem) mem = malloc(sizeof(MyMesh));   // no-PSRAM fallback: behaves as before
+  return *new (mem) MyMesh(radio_driver, fast_rng, rtc_clock, tables, store
+   #ifdef DISPLAY_CLASS
+      , &ui_task
+   #endif
+  );
+}
+MyMesh& the_mesh = makeTheMesh();
+#else
 MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
    #ifdef DISPLAY_CLASS
       , &ui_task
    #endif
 );
+#endif
 
 /* END GLOBAL OBJECTS */
 
