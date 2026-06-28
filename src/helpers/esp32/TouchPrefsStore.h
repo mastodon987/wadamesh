@@ -127,6 +127,22 @@ bool    touchPrefsSetUiScale(uint8_t scale);
 bool    touchPrefsGetKbdNav();
 bool    touchPrefsSetKbdNav(bool on);
 
+/* T-Deck trackball mode: 1 = drive the focus-group D-pad nav (up/down/left/right move the
+ * selection, centre click selects — same logic as the Tanmatsu keypad); 0 = the soft mouse
+ * cursor. Default 1. Independent of the keyboard ESDFX nav above. Applied live (no reboot). */
+bool    touchPrefsGetTbNav();
+bool    touchPrefsSetTbNav(bool on);
+/* Opt-in (issue #64): when true, direct/login/admin unicast floods are tagged with the
+ * node's default region scope so a region-scoped repeater that is your ONLY path will
+ * re-flood them. Default false (unscoped) — leaving it off keeps cross-region login/DMs. */
+bool    touchPrefsGetScopeDirect();
+bool    touchPrefsSetScopeDirect(bool on);
+/* Heltec V4.3 high-gain FEM LNA (~17 dB external receive amplifier). Default false (bypassed,
+ * matching the hardware default). On = better sensitivity in quiet areas; can desensitize in
+ * noisy/urban areas. Only meaningful on V4.3 (board.femLnaControllable()). */
+bool    touchPrefsGetFemLna();
+bool    touchPrefsSetFemLna(bool on);
+
 /* Keyboard-nav tab hotkeys: the ASCII key that jumps to each main tab while
  * keyboard navigation is on. `tab` is the tab index 0..4 = chat / contacts / home
  * / map / settings. Defaults E/R/T/U/I. Programmable in Settings → Keyboard. */
@@ -206,6 +222,36 @@ bool touchPrefsSetWifiSlot(int idx, const char* label,
  *  Returns false if idx out of range or the slot is empty. */
 bool touchPrefsActivateWifiSlot(int idx);
 
+/** Saved "known networks" (iPhone/Android-style) — the reworked Wi-Fi store.
+ *  Up to 8 networks, each {ssid, passphrase, auto-join flag, recency rank}.
+ *  Rank is a monotonic counter bumped on connect: highest = most recently used
+ *  (drives the saved-list order + which entry is evicted when full). The "active"
+ *  credentials still live in the meshcomod NVS namespace; connecting copies a
+ *  saved network into it + requests an apply. ssid/pwd sizes mirror
+ *  WIFI_CONFIG_SSID_MAX (32) / WIFI_CONFIG_PWD_MAX (64). */
+constexpr int TOUCH_WIFI_NET_COUNT = 8;
+struct TouchWifiNet {
+  bool     used;
+  bool     auto_join;
+  uint32_t rank;
+  char     ssid[33];
+  char     pwd[65];
+};
+/** Read saved network idx (0..7). out.used == false when the slot is empty. */
+bool touchPrefsGetWifiNet(int idx, TouchWifiNet& out);
+/** Index of the saved network with this exact ssid, or -1. */
+int  touchPrefsFindWifiNet(const char* ssid);
+/** Add or update a network by ssid (preserves the old passphrase when pwd is
+ *  empty), bumping its recency. Evicts the least-recent when full. -> idx / -1. */
+int  touchPrefsSaveWifiNet(const char* ssid, const char* pwd, bool auto_join);
+/** Delete saved network idx. */
+bool touchPrefsForgetWifiNet(int idx);
+/** Set the auto-join flag on saved network idx. */
+bool touchPrefsSetWifiNetAutoJoin(int idx, bool on);
+/** Load saved network idx into the active credentials + request a reconnect,
+ *  and bump its recency so a reboot reconnects to it. Returns false if empty. */
+bool touchPrefsConnectWifiNet(int idx);
+
 /** Favorite contacts. Identified by the first 6 bytes of their pubkey — same
  *  prefix the firmware uses for short-key contact lookups — so 16 favorites
  *  fit in a 96-byte NVS blob. Pure UI metadata; the firmware contact table
@@ -268,8 +314,18 @@ uint8_t touchPrefsGetDiscoveredMaxHops();      // auto-delete discovered nodes h
 void    touchPrefsSetDiscoveredMaxHops(uint8_t hops);
 bool    touchPrefsGetSoundMentions();          // default true
 void    touchPrefsSetSoundMentions(bool on);
+bool    touchPrefsGetSoundDirect();            // direct/DM chime on/off, default true
+void    touchPrefsSetSoundDirect(bool on);
 uint8_t touchPrefsGetSoundVolume();            // 0..100, default 70
 void    touchPrefsSetSoundVolume(uint8_t vol);
+
+/** Per-event notification sound FILE (empty = built-in chime). Slot:
+ *  0 = message, 1 = direct/DM, 2 = @-mention. Stored as a path pref like the
+ *  lock wallpaper ("" | "/sounds/x.wav" | "sd:/x.wav"). T-Deck only. */
+enum { TOUCH_SND_MSG = 0, TOUCH_SND_DM = 1, TOUCH_SND_MEN = 2 };
+constexpr int TOUCH_SOUND_PATH_MAXLEN = 128;
+int  touchPrefsGetSoundFile(int slot, char* out, int out_cap);
+bool touchPrefsSetSoundFile(int slot, const char* path);
 
 /** Tanmatsu keyboard backlight brightness, 0–100 %. Default 100. Separate from
  *  screen brightness (touchPrefsGet/SetBrightness) and volume (…SoundVolume). */

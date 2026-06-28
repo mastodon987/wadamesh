@@ -1981,10 +1981,20 @@ void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, ui
   // EXPLICIT per-send override (send_scope, set by the app's CMD_SET_FLOOD_SCOPE)
   // is honoured here; otherwise unscoped. Channel/group floods keep default_scope
   // — see the GroupChannel overload below — so public-channel containment is intact.
-  if (send_unscoped || send_scope.isNull()) {
+  if (send_unscoped) {
     sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);
+  } else if (!send_scope.isNull()) {
+    sendFloodScoped(send_scope, pkt, delay_millis);   // explicit per-send override (app CMD_SET_FLOOD_SCOPE)
+  } else if (scope_direct_floods) {
+    // Opt-in "single-region" mode (default OFF): tag these unicast floods with the node's
+    // default region scope so a region-scoped repeater that is the ONLY path will re-flood
+    // them (issue #64). sendFloodScoped() falls back to a plain unscoped flood when no region
+    // is configured. With the flag OFF this whole branch is skipped and behaviour is unchanged.
+    TransportKey default_scope;
+    memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+    sendFloodScoped(default_scope, pkt, delay_millis);
   } else {
-    sendFloodScoped(send_scope, pkt, delay_millis);   // explicit override only
+    sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);   // default: unscoped (cross-region safe)
   }
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -4398,8 +4408,15 @@ bool MyMesh::sendAdvert(bool flood) {
   }
   if (!pkt) return false;
   if (flood) {
-    // path_hash_size = path_hash_mode + 1 (matches the CMD_SEND_ADVERT path).
-    sendFlood(pkt, 0, (uint8_t)(_prefs.path_hash_mode + 1));
+    // Tag the flood advert with the node's default region scope — EXACTLY like the
+    // companion CMD_SEND_SELF_ADVERT path (see ~line 3007). Without this the UI's flood
+    // advert went out UNSCOPED, so region-scoped repeaters (denyf *) dropped it: an advert
+    // sent from the touch screen was never relayed, while the identical advert from the
+    // phone app (which DOES scope it) was. (Issue #68.) sendFloodScoped() falls back to a
+    // plain unscoped flood when no default region is configured, so this is a no-op then.
+    TransportKey default_scope;
+    memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+    sendFloodScoped(default_scope, pkt, 0);
   } else {
     sendZeroHop(pkt);
   }

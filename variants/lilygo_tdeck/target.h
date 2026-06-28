@@ -16,6 +16,7 @@
 
 extern TDeckBoard board;
 extern WRAPPER_CLASS radio_driver;
+extern RADIO_CLASS radio;   // raw SX1262 — driven directly by the Spectrum analyzer sweep
 extern AutoDiscoverRTCClock rtc_clock;
 extern EnvironmentSensorManager sensors;
 

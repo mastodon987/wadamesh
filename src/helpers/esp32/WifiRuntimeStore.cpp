@@ -176,6 +176,10 @@ bool wifiConfigConsumeApplyRequest() {
   return true;
 }
 
+static volatile bool s_wifi_scan_active = false;
+void wifiScanSetActive(bool active) { s_wifi_scan_active = active; }
+bool wifiScanIsActive() { return s_wifi_scan_active; }
+
 void wifiConfigApply() {
 #if defined(HAS_TANMATSU)
   printf("[WIFI] apply radio_en=%d hasRuntime=%d mode=%d status=%d\n",
@@ -188,7 +192,7 @@ void wifiConfigApply() {
     WiFi.mode(WIFI_OFF);
     return;
   }
-  if (!wifiConfigHasRuntime()) return;
+  if (!wifiConfigHasRuntime()) return;   // no cred -> leave the STA alone (eraseap wedges this radio)
   char ssid[WIFI_CONFIG_SSID_MAX];
   char pwd[WIFI_CONFIG_PWD_MAX];
   wifiConfigGetSsid(ssid, sizeof(ssid));

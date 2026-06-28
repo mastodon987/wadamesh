@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 21;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap)
+static const uint8_t  TOUCH_CFG_VER   = 25;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in)
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -92,6 +92,9 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  show_sensors_tab;  // V4 Expansion Kit: show the Sensors tab + Home env widget (bool, default 1) — v19 (trailing)
   uint8_t  map_show_links;    // show self->contact link lines on the map (bool, default 1) — v20 (trailing)
   uint8_t  map_style;         // map tile style: 0=OpenStreetMap (default), 1=OpenTopoMap — v21 (trailing)
+  uint8_t  tb_nav;            // T-Deck trackball: 1=D-pad UI navigation (default), 0=soft cursor — v22 (trailing)
+  uint8_t  scope_direct;      // 1=tag direct/login/admin floods with the default region scope (opt-in, default 0) — v23 (trailing)
+  uint8_t  fem_lna;           // Heltec V4.3 high-gain FEM LNA (~17 dB): 1=on, 0=bypass (default) — v25 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -154,6 +157,9 @@ static void cfgSetDefaults(TouchCfg& c) {
 #else
   c.kbd_nav           = 0;      // T-Deck / V4: keyboard navigation OFF by default (opt-in; persists once toggled on)
 #endif
+  c.tb_nav            = 0;      // T-Deck trackball: soft-cursor by default. D-pad UI nav is EXPERIMENTAL (opt-in)
+  c.scope_direct      = 0;      // OFF: direct/login floods stay unscoped (cross-region safe). Opt-in per issue #64.
+  c.fem_lna           = 0;      // OFF: V4.3 FEM LNA bypassed (matches the hardware default). Opt-in high-gain RX.
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
@@ -220,6 +226,15 @@ static void cfgLoadOrMigrate() {
 #if !defined(HAS_TANMATSU)
         if (s_cfg.ver < 18) s_cfg.kbd_nav = 0;
 #endif
+        // v22: new trailing field — default the T-Deck trackball to D-pad UI nav on existing installs.
+        if (s_cfg.ver < 22) s_cfg.tb_nav = 1;
+        // v23: new trailing field — scope-direct-floods OFF on existing installs (opt-in).
+        if (s_cfg.ver < 23) s_cfg.scope_direct = 0;
+        // v24: trackball D-pad UI nav demoted to EXPERIMENTAL — default OFF (was on at v22). Flip
+        // existing installs back to the soft cursor; the toggle lets users opt back in.
+        if (s_cfg.ver < 24) s_cfg.tb_nav = 0;
+        // v25: new trailing field — V4.3 FEM LNA OFF on existing installs (matches hardware default).
+        if (s_cfg.ver < 25) s_cfg.fem_lna = 0;
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
         cfgFlush();                // rewrite with new fields defaulted-in
@@ -536,6 +551,39 @@ bool touchPrefsSetLockWallpaper(const char* path) {
   s_prefs.end();
   if (!s_prefs.begin(TOUCH_NS, false)) return false;
   bool ok = s_prefs.putString(KEY_LOCK_WALL, path) > 0;
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
+static const char* soundFileKey(int slot) {
+  // Distinct from the on/off keys snd_msg/snd_dm/snd_men (those are uchar) —
+  // a uchar and a String must not share an NVS key.
+  switch (slot) {
+    case TOUCH_SND_DM:  return "sndf_dm";
+    case TOUCH_SND_MEN: return "sndf_men";
+    default:            return "sndf_msg";
+  }
+}
+int touchPrefsGetSoundFile(int slot, char* out, int out_cap) {
+  if (!out || out_cap <= 0) return 0;
+  out[0] = '\0';
+  if (!s_begun) touchPrefsBegin();
+  String v = prefsGetStr(soundFileKey(slot), String(""));
+  int n = (int)v.length();
+  if (n > out_cap - 1) n = out_cap - 1;
+  if (n > TOUCH_SOUND_PATH_MAXLEN - 1) n = TOUCH_SOUND_PATH_MAXLEN - 1;
+  memcpy(out, v.c_str(), (size_t)n);
+  out[n] = '\0';
+  return n;
+}
+bool touchPrefsSetSoundFile(int slot, const char* path) {
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) return false;
+  bool ok;
+  if (!path || !path[0]) { s_prefs.remove(soundFileKey(slot)); ok = true; }   // empty => built-in chime
+  else                     ok = s_prefs.putString(soundFileKey(slot), path) > 0;
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
   return ok;
@@ -878,6 +926,35 @@ bool touchPrefsSetKbdNav(bool on) {
   s_cfg.kbd_nav = on ? 1 : 0;
   return cfgFlush();
 }
+bool touchPrefsGetTbNav() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.tb_nav != 0;
+}
+bool touchPrefsSetTbNav(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.tb_nav = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetScopeDirect() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.scope_direct != 0;
+}
+bool touchPrefsSetScopeDirect(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.scope_direct = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetFemLna() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.fem_lna != 0;
+}
+bool touchPrefsSetFemLna(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.fem_lna = on ? 1 : 0;
+  return cfgFlush();
+}
 
 uint8_t touchPrefsGetNavKey(int tab) {
   if (!s_begun) touchPrefsBegin();
@@ -1043,6 +1120,129 @@ bool touchPrefsSetWifiSlot(int idx, const char* label,
   wifiSlotKey(idx, 'p', k); s_prefs.putString(k, pwd   ? pwd   : "");
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  return true;
+}
+
+// ---- Saved "known networks" store (reworked iPhone/Android-style Wi-Fi) -----
+// Keys per idx: "wn<idx>s" ssid, "wn<idx>p" pwd, "wn<idx>f" flags uchar
+// (bit0 used, bit1 auto-join), "wn<idx>r" rank uint32. "wnctr" = global recency.
+static void wifiNetKey(int idx, char kind, char out[8]) {
+  int p = 0;
+  out[p++] = 'w'; out[p++] = 'n';
+  out[p++] = (char)('0' + (idx & 0x07));
+  out[p++] = kind;
+  out[p]   = '\0';
+}
+
+bool touchPrefsGetWifiNet(int idx, TouchWifiNet& out) {
+  memset(&out, 0, sizeof(out));
+  if (idx < 0 || idx >= TOUCH_WIFI_NET_COUNT) return false;
+  if (!s_begun) touchPrefsBegin();
+  char k[8];
+  wifiNetKey(idx, 'f', k);
+  const uint8_t flags = s_prefs.isKey(k) ? s_prefs.getUChar(k, 0) : 0;
+  out.used      = (flags & 0x01) != 0;
+  out.auto_join = (flags & 0x02) != 0;
+  if (!out.used) return true;
+  wifiNetKey(idx, 's', k); { String v = prefsGetStr(k, ""); strlcpy(out.ssid, v.c_str(), sizeof(out.ssid)); }
+  wifiNetKey(idx, 'p', k); { String v = prefsGetStr(k, ""); strlcpy(out.pwd,  v.c_str(), sizeof(out.pwd)); }
+  wifiNetKey(idx, 'r', k); out.rank = s_prefs.isKey(k) ? s_prefs.getUInt(k, 0) : 0;
+  return true;
+}
+
+int touchPrefsFindWifiNet(const char* ssid) {
+  if (!ssid || !ssid[0]) return -1;
+  TouchWifiNet n;
+  for (int i = 0; i < TOUCH_WIFI_NET_COUNT; ++i)
+    if (touchPrefsGetWifiNet(i, n) && n.used && strcmp(n.ssid, ssid) == 0) return i;
+  return -1;
+}
+
+int touchPrefsSaveWifiNet(const char* ssid, const char* pwd, bool auto_join) {
+  if (!ssid || !ssid[0]) return -1;
+  if (!s_begun) touchPrefsBegin();
+  TouchWifiNet n;
+  int idx = touchPrefsFindWifiNet(ssid);           // update existing by ssid
+  if (idx < 0) {                                   // else first free slot
+    for (int i = 0; i < TOUCH_WIFI_NET_COUNT && idx < 0; ++i)
+      if (touchPrefsGetWifiNet(i, n) && !n.used) idx = i;
+  }
+  if (idx < 0) {                                   // else evict the least-recent
+    uint32_t lo = UINT32_MAX; int loi = 0;
+    for (int i = 0; i < TOUCH_WIFI_NET_COUNT; ++i) {
+      touchPrefsGetWifiNet(i, n);
+      if (n.rank <= lo) { lo = n.rank; loi = i; }
+    }
+    idx = loi;
+  }
+  // Preserve the existing passphrase if the caller passed an empty one (e.g. a
+  // metadata-only re-save).
+  char use_pwd[65];
+  if (pwd && pwd[0]) strlcpy(use_pwd, pwd, sizeof(use_pwd));
+  else { TouchWifiNet ex; use_pwd[0] = '\0'; if (touchPrefsGetWifiNet(idx, ex) && ex.used) strlcpy(use_pwd, ex.pwd, sizeof(use_pwd)); }
+  const uint32_t ctr = (s_prefs.isKey("wnctr") ? s_prefs.getUInt("wnctr", 0) : 0) + 1;
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return -1; }
+  char k[8];
+  wifiNetKey(idx, 's', k); s_prefs.putString(k, ssid);
+  wifiNetKey(idx, 'p', k); s_prefs.putString(k, use_pwd);
+  wifiNetKey(idx, 'f', k); s_prefs.putUChar(k, (uint8_t)(0x01 | (auto_join ? 0x02 : 0)));
+  wifiNetKey(idx, 'r', k); s_prefs.putUInt(k, ctr);
+  s_prefs.putUInt("wnctr", ctr);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return idx;
+}
+
+bool touchPrefsForgetWifiNet(int idx) {
+  if (idx < 0 || idx >= TOUCH_WIFI_NET_COUNT) return false;
+  TouchWifiNet n;
+  const bool had = touchPrefsGetWifiNet(idx, n) && n.used;
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  char k[8];
+  wifiNetKey(idx, 's', k); s_prefs.remove(k);
+  wifiNetKey(idx, 'p', k); s_prefs.remove(k);
+  wifiNetKey(idx, 'f', k); s_prefs.remove(k);   // clears the used bit
+  wifiNetKey(idx, 'r', k); s_prefs.remove(k);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  // If this was the network the device is using/targeting, also drop the ACTIVE
+  // credentials so main.cpp stops trying to (re)connect to it (the reconnect loop
+  // is gated on wifiConfigHasRuntime(), which clearing makes false).
+  if (had && n.ssid[0]) {
+    char active[WIFI_CONFIG_SSID_MAX] = {0};
+    wifiConfigGetSsid(active, sizeof active);
+    if (strcmp(active, n.ssid) == 0) {
+      wifiConfigClear();
+      wifiConfigRequestApply();
+    }
+  }
+  return true;
+}
+
+bool touchPrefsSetWifiNetAutoJoin(int idx, bool on) {
+  TouchWifiNet n;
+  if (!touchPrefsGetWifiNet(idx, n) || !n.used) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  char k[8];
+  wifiNetKey(idx, 'f', k); s_prefs.putUChar(k, (uint8_t)(0x01 | (on ? 0x02 : 0)));
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return true;
+}
+
+bool touchPrefsConnectWifiNet(int idx) {
+  TouchWifiNet n;
+  if (!touchPrefsGetWifiNet(idx, n) || !n.used || !n.ssid[0]) return false;
+  if (!wifiConfigSetSsid(n.ssid)) return false;
+  if (!wifiConfigSetPwd(n.pwd))   return false;
+  wifiConfigSetRadioEnabled(true);
+  wifiConfigRequestApply();
+  touchPrefsSaveWifiNet(n.ssid, n.pwd, n.auto_join);   // re-save bumps recency
   return true;
 }
 
@@ -1270,6 +1470,11 @@ bool touchPrefsGetSoundMentions() {
   return s_prefs.getUChar("snd_men", 1) != 0;
 }
 void touchPrefsSetSoundMentions(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_men", on ? 1 : 0); }
+bool touchPrefsGetSoundDirect() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("snd_dm", 1) != 0;
+}
+void touchPrefsSetSoundDirect(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_dm", on ? 1 : 0); }
 bool touchPrefsGetDiscoveredAutoEvict() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getUChar("dsc_evict", 1) != 0;

@@ -46,4 +46,11 @@ bool wifiConfigWantsWifi();
 void wifiConfigRequestApply();
 bool wifiConfigConsumeApplyRequest();
 
+/* Set while a Wi-Fi scan runs on the worker task. The main loop's reconnect-retry
+ * must NOT call WiFi.disconnect()/begin() during a scan — that aborts the in-flight
+ * sweep (esp_wifi_scan_start gets cancelled), which is why a scan-while-connected
+ * returned 0 APs. The worker also disables setAutoReconnect for the same reason. */
+void wifiScanSetActive(bool active);
+bool wifiScanIsActive();
+
 #endif

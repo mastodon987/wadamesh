@@ -608,7 +608,9 @@ void loop() {
       }
     }
     // Automatic WiFi recovery for TCP mode: retry connection periodically if link drops.
-    if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED) {
+    // Suppressed while a scan runs on the worker: WiFi.disconnect()+begin() here would
+    // abort the in-flight sweep (the scan-while-connected "0 networks" bug).
+    if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED && !wifiScanIsActive()) {
       uint32_t now = millis();
       if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
         last_wifi_retry_ms = now;
@@ -676,6 +678,14 @@ void loop() {
     serial_interface.startTcpServer(WiFi.status() == WL_CONNECTED);
     serial_interface.tickWebSocketHandshake();
   }
+#endif
+#if defined(HAS_TOUCH_UI)
+  // The touch-UI "Spectrum" RF analyzer borrows the radio while open: it sweeps
+  // the modem across the band, so the mesh must NOT touch the radio (re-tune /
+  // re-arm RX on the home channel) meanwhile. spectrumOwnsRadio() is true only
+  // while that app is up; the moment it closes it restores the mesh radio params
+  // and clears the flag, so the next the_mesh.loop() re-arms RX correctly.
+  if (!spectrumOwnsRadio())
 #endif
   the_mesh.loop();
 #if defined(GPS_BUF_DEBUG)

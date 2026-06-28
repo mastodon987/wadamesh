@@ -36,4 +36,10 @@ public:
   }
   float getAdcMultiplier() const override { return adc_mult; }
   const char* getManufacturerName() const override;
+
+  // V4.3 (KCT8103L FEM) high-gain receiver LNA (~17 dB). It is BYPASSED by default; this turns it
+  // on/off and re-drives the FEM into RX so the change applies to the live receive immediately.
+  // femLnaControllable() is true only on boards where the LNA is switchable (V4.3); a no-op elsewhere.
+  void setFemLnaEnable(bool en) { loRaFEMControl.setLNAEnable(en); loRaFEMControl.setRxModeEnable(); }
+  bool femLnaControllable() { return loRaFEMControl.isLnaCanControl(); }
 };

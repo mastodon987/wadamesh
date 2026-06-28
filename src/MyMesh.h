@@ -651,6 +651,11 @@ public:
   // a blank/NULL name clears it (unscoped, the default). Persists immediately.
   void setDefaultFloodScope(const char* region_name);
 
+  // Opt-in: when true, direct/login/admin UNICAST floods are also tagged with the default
+  // region scope, so a region-scoped repeater that is your ONLY path will re-flood them.
+  // Default false keeps them unscoped (cross-region login/DMs work). (Issue #64.)
+  void setScopeDirectFloods(bool on) { scope_direct_floods = on; }
+
   // Per-channel flood-scope override. pushChannelScope() derives a transient scope
   // from "#region" (SHA256) for the NEXT channel send and returns true (the caller
   // must popChannelScope() right after that send to restore); a blank/NULL name is
@@ -874,6 +879,7 @@ private:
   bool _iter_started;
   bool _cli_rescue;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
+  bool scope_direct_floods = false;  // opt-in (#64): tag direct/login/admin floods with the default region scope
   char cli_command[80];
   uint8_t app_target_ver;
   uint8_t *sign_data;

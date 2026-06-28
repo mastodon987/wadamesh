@@ -461,3 +461,10 @@ public:
 
   void shutdown(bool restart = false);
 };
+
+// True while the touch-UI "Spectrum" RF-analyzer app owns the radio. main.cpp's
+// loop() checks this and SKIPS the_mesh.loop() while it's true, so the mesh never
+// re-tunes / re-arms RX on the home channel while the analyzer sweeps the band.
+// Defined in UITask.cpp (returns a static flag set on open / cleared after the
+// radio is restored to the mesh config on close).
+bool spectrumOwnsRadio();
