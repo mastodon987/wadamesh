@@ -2,7 +2,7 @@
 
 # --- New ---
 Spectrum analyzer: a new app in the app drawer that sweeps the LoRa band and draws a live spectrum with a waterfall under it, a colour scale on the side and a peak-frequency readout. Handy for spotting interference or finding a quiet part of the band before you settle on a frequency.
-Custom notification sounds: you can set your own notification sound from a 16-bit WAV file on the SD card, per event, instead of only the built-in chime. There is also a separate switch for the direct-message chime.
+Custom notification sounds: you can set your own notification sound from a 16-bit WAV file on the SD card, per event, instead of only the built-in chime. There is also a separate switch for the direct-message chime. Contributed by Yazutsu (#66).
 Saved Wi-Fi networks: the device remembers more than one network now and can auto-join them. Each saved network has its own auto-join switch and can be forgotten on its own.
 One chat settings screen: the gear on a chat or channel row, a long-press on that row, and the cog inside an open chat now all open the same screen. Everything is in one place: mark as read, mute messages, mute mentions, region and scope, share secret, blocked users, and remove or delete.
 Per-channel mute: silence the notification sound for a single channel while the rest keep chiming.
