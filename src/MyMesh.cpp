@@ -1745,12 +1745,14 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
       memcpy(&out_frame[1], contact.id.pub_key, PUB_KEY_SIZE);
       _serial->writeFrameToAll(out_frame, 1 + PUB_KEY_SIZE);
     }
-  } else {
-#ifdef DISPLAY_CLASS
-    if (_ui) _ui->notify(UIEventType::newContactMessage);
-#endif
   }
 #ifdef DISPLAY_CLASS
+  // Notify the touch UI whether or not a companion app is connected. This used to
+  // fire only in the standalone (else) branch, so a contact discovered while the
+  // phone app was attached over BLE gave the device's OWN screen no indication and
+  // never refreshed its Contacts list (issue #73). notify() flags the list dirty so
+  // UITask::loop rebuilds it when the Contacts tab is showing.
+  if (_ui) _ui->notify(UIEventType::newContactMessage);
   // Mirror to the touch UI's Discovered store so the user can browse pending
   // adverts and manually add nodes to contacts[] (used when auto-add is off
   // or contacts[] is full). `is_new=true` here means the contact is NOT yet
@@ -2362,6 +2364,18 @@ void MyMesh::onRawDataRecv(mesh::Packet *packet) {
 void MyMesh::onTraceRecv(mesh::Packet *packet, uint32_t tag, uint32_t auth_code, uint8_t flags,
                          const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) {
   uint8_t path_sz = flags & 0x03;  // NEW v1.11+
+  // Silent SIGNAL PROBE result: a directed trace we sent to a neighbouring repeater
+  // has come back (it retransmitted; we heard it). Capture OUR reception of that
+  // reply — SNR + RSSI — as the live signal, and swallow it (no popup). This is the
+  // non-flooding replacement for the old flood-advert probe, and must run before the
+  // visible-ping path below.
+  if (tag != 0 && tag == _ui_sig_probe_tag) {
+    _ui_sig_probe_tag = 0;
+    _ui_sig_snr_q4 = (int8_t)(packet->getSNR() * 4.0f);
+    _ui_sig_rssi   = (int8_t)_radio->getLastRSSI();
+    _ui_sig_ms     = millis();
+    return;
+  }
 #if defined(DISPLAY_CLASS)
   // If this trace's tag matches the most recent UI-initiated ping, surface
   // the bidirectional SNRs directly to the touch UI instead of (or in

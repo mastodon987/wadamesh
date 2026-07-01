@@ -17036,7 +17036,7 @@ static void sigPollSaveCb(lv_event_t* e) {
 // Manual probe: send a flood advert now so nearby repeaters echo it back.
 static void sigProbeNowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
-  g_lv.task->sendAdvertZeroHop();   // zero-hop only — neighbours hear it; the mesh never re-floods it
+  g_lv.task->sendSignalProbe();   // directed trace-ping to the nearest repeater (no flood); it replies with our link signal
   g_lv.task->showAlert(TR("Probing neighbours\xE2\x80\xA6"), 900);
 }
 static void openSignalInfoPopup() {
@@ -18569,6 +18569,7 @@ static bool      s_ct_select_mode = false;
 static uint8_t   s_ct_sel[128][6];           // pub_key prefix of currently-selected (deletable) contacts
 static int       s_ct_sel_n       = 0;
 static bool      s_ct_list_force  = false;   // force refreshContactsList past its no-change cache
+static volatile bool s_ct_contacts_dirty = false;   // a contact was discovered/added (set from the mesh callback); UITask::loop rebuilds the visible Contacts list — issue #73
 static void contactsListForceRefresh() { s_ct_list_force = true; refreshContactsList(); }
 static lv_obj_t* s_ct_sort_sheet  = nullptr; // Sort & filter overlay
 static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal mode
@@ -35270,6 +35271,14 @@ bool UITask::setScreenTimeoutSecs(uint16_t seconds) {
 bool UITask::sendAdvertNow() { return the_mesh.advert(); }
 bool UITask::sendAdvertFlood() { return the_mesh.sendAdvert(true); }
 bool UITask::sendAdvertZeroHop() { return the_mesh.sendAdvert(false); }
+// Signal probe: ask the nearest repeater to reply (a directed trace, never a flood)
+// so the live signal reading updates from a real link measurement. If no repeater
+// with a known path is available, fall back to a zero-hop advert (announce ourselves;
+// passive RX still updates the signal from any directly-heard neighbour).
+bool UITask::sendSignalProbe() {
+  if (the_mesh.uiSendSignalProbe() != 0) return true;
+  return the_mesh.sendAdvert(false);
+}
 
 void UITask::persistHistoryNow() {
   saveThreadsToStorage();
@@ -35504,6 +35513,10 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 
 void UITask::notify(UIEventType t) {
   g_last_event = t;
+  // A discovered/added contact should refresh the Contacts list even mid-frame and
+  // even while a companion app is connected (issue #73). Flag it; UITask::loop does
+  // the rebuild on the LVGL thread (refreshContactsList no-op's when nothing changed).
+  if (t == UIEventType::newContactMessage) s_ct_contacts_dirty = true;
   const char* msg = nullptr;
   switch (t) {
     case UIEventType::contactMessage:    msg = TR("New DM");          break;
@@ -35562,6 +35575,13 @@ void UITask::loop() {
   // radio forever — so re-apply the mesh params and release ownership here.
   if (s_spectrum_active && !s_spec_root) spectrumRestoreRadio();
   flushHistoryIfDue(now);
+  // A contact was discovered/added (possibly while a companion app was connected —
+  // the old code left the device screen unaware; issue #73). Rebuild the Contacts
+  // list if it's the visible tab; refreshContactsList no-op's when nothing changed.
+  if (s_ct_contacts_dirty) {
+    s_ct_contacts_dirty = false;
+    if (getActiveTab() == CONTACTS_TAB_INDEX) refreshContactsList();
+  }
 #if defined(HAS_TANMATSU)
   if (s_msgled_flash_until) msgLedRefresh(getUnreadTotal() > 0);   // end the one-shot envelope-LED flash on time
 #endif
@@ -35930,7 +35950,7 @@ void UITask::loop() {
         s_sig_probe_at = now + poll_ms;
         const uint32_t sms = the_mesh.uiSignalMs();
         // Skip the announce when a direct neighbour was heard within the poll window.
-        if (sms == 0 || (now - sms) >= poll_ms - 5000UL) sendAdvertZeroHop();
+        if (sms == 0 || (now - sms) >= poll_ms - 5000UL) sendSignalProbe();
       } else {
         s_sig_probe_at = now + 60000;   // probe off: just re-check the toggle each minute
       }

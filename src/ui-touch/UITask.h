@@ -423,6 +423,7 @@ public:
   bool sendAdvertNow();         // legacy: zero-hop
   bool sendAdvertFlood();       // multi-hop flood
   bool sendAdvertZeroHop();     // explicit zero-hop (same as sendAdvertNow)
+  bool sendSignalProbe();       // trace-ping the nearest repeater (non-flooding); falls back to zero-hop advert
   void rebootDevice();
   // Synchronously persist chat history to flash. Call before any path that
   // restarts the device (Wi-Fi/BLE mode switch, etc.) so recent chat isn't

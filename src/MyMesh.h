@@ -623,6 +623,48 @@ public:
     return tag;
   }
 
+  /** SIGNAL PROBE (the non-flooding way): trace-ping the best-reachable repeater so
+   *  it retransmits — a real reply we can measure — WITHOUT flooding the mesh. A
+   *  plain zero-hop advert gets no reply (nothing repeats it), so the signal never
+   *  updates; a directed trace to a neighbour repeater does (it appends its RX-SNR
+   *  and retransmits, which we hear). Picks the repeater with the shortest known
+   *  path (0 = direct neighbour), breaking ties by most-recently-heard. The reply
+   *  is captured silently in onTraceRecv via _ui_sig_probe_tag → _ui_sig_*. Returns
+   *  the tag, or 0 if no repeater with a known path is available (the caller can
+   *  fall back to a zero-hop advert). */
+  uint32_t uiSendSignalProbe() {
+    ContactInfo best; bool have = false; ContactInfo c;
+    const int n = getNumContacts();
+    for (int i = 0; i < n; i++) {
+      if (!getContactByIdx((uint32_t)i, c)) continue;
+      if (c.type != ADV_TYPE_REPEATER) continue;          // only repeaters retransmit a trace
+      if (c.out_path_len == OUT_PATH_UNKNOWN) continue;   // no known path → would need a flood
+      if (c.out_path_len > MAX_PATH_SIZE) continue;       // guard a corrupt length
+      if (!have) { best = c; have = true; continue; }
+      if (c.out_path_len < best.out_path_len ||
+          (c.out_path_len == best.out_path_len &&
+           c.last_advert_timestamp > best.last_advert_timestamp)) {
+        best = c;
+      }
+    }
+    if (!have) return 0;
+    uint32_t tag = 0;
+    getRNG()->random((uint8_t*)&tag, sizeof(tag));
+    if (tag == 0) tag = 1;
+    uint8_t flags = (uint8_t)(_prefs.path_hash_mode & 0x03);
+    mesh::Packet* pkt = createTrace(tag, 0, flags);
+    if (!pkt) return 0;
+    _ui_sig_probe_tag = tag;
+    if (best.out_path_len > 0 && best.out_path_len <= MAX_PATH_SIZE) {
+      sendDirect(pkt, best.out_path, best.out_path_len);   // directed along the known path
+    } else {
+      uint8_t hash_sz = (uint8_t)(_prefs.path_hash_mode + 1);
+      if (hash_sz == 0 || hash_sz > 4) hash_sz = 1;
+      sendDirect(pkt, best.id.pub_key, hash_sz);           // direct neighbour → single hop
+    }
+    return tag;
+  }
+
   /** Request CayenneLPP telemetry from a remote contact. Reply is delivered
    *  via AbstractUITask::onTelemetryReply with the raw LPP payload after the
    *  4-byte timestamp header. Falls back to onPingReply if the UI didn't
@@ -955,6 +997,7 @@ private:
   // path. Single-slot is enough because the UI gates a new ping until the
   // last one resolves or times out.
   uint32_t _ui_trace_ping_tag = 0;
+  uint32_t _ui_sig_probe_tag  = 0;   // in-flight silent signal probe (updates _ui_sig_* only, no popup)
 };
 
 #if defined(ESP32_PLATFORM)
