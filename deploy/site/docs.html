@@ -127,6 +127,7 @@
     <div class="grp">With your phone</div>
     <a href="#companion">Companion mode</a>
     <div class="grp">Reference</div>
+    <a href="#updates">Updates &amp; test builds</a>
     <a href="#settings-pages">Settings pages</a>
     <a href="#apps">Apps</a>
   </nav>
@@ -236,6 +237,24 @@
           </div>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/set_bluetooth.png" alt="Bluetooth pairing page"></div><div class="cap">Bluetooth &mdash; pairing code</div></div>
+      </div>
+    </section>
+
+    <section class="doc" id="updates">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span> Updates &amp; test builds</h2>
+      <div class="row">
+        <div class="prose">
+          <p>On the boards that update over Wi-Fi (the Heltec V4 and the standalone T-Deck), WADAMESH checks for new firmware on its own. When one is available, <b>Settings &rarr; About</b> shows it and you can flash it straight from the device with <b>Install update</b>, no computer needed. (Under Launcher and on the Tanmatsu you update through Launcher or the app store instead.)</p>
+          <h3>Two channels: Stable and Test</h3>
+          <ul>
+            <li><b>Stable</b> is the default. It is the build that has been tested and is recommended for everyday use. Leave your device on this unless you want to help test.</li>
+            <li><b>Test (beta)</b> gets new features and fixes earlier, before they are proven. It can be rough, so it is meant for trying things early and reporting bugs, not for a device you rely on.</li>
+          </ul>
+          <h3>Turn on test builds</h3>
+          <p>Flip <b>Settings &rarr; About &rarr; "Get test builds (beta)"</b> on. From then on, both the update check and <b>Install update</b> follow the test channel, so the device offers the newest test build over Wi-Fi. Turn the switch back off to return to stable. You can switch either way at any time.</p>
+          <p>Prefer to start on a test build from scratch? Pick <b>Beta &middot; testing</b> when you flash from <a href="https://flasher.wadamesh.com" target="_blank" rel="noopener">flasher.wadamesh.com</a>.</p>
+        </div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/set_about.png" alt="About page"></div><div class="cap">The About page</div></div>
       </div>
     </section>
 
@@ -438,6 +457,7 @@
           <div class="lede">Version, updates and diagnostics.</div>
           <ul>
             <li><b>Firmware version</b> plus update check / install</li>
+            <li><b>Get test builds (beta)</b> switch: opt into the <a href="#updates">test channel</a></li>
             <li>Full <b>system diagnostics</b> — uptime, chip, memory, flash, storage</li>
             <li><b>Device ID</b> and crash-report export</li>
           </ul>
