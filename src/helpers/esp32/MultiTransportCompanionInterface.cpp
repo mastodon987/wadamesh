@@ -3,6 +3,10 @@
 #include "WifiRuntimeStore.h"   // persist BLE on/off (ble_en) across reboots
 #include <string.h>
 
+// Companion push code for the per-packet RX log (matches MyMesh.cpp). It is kept OFF
+// the BLE transport in writeFrameToAll — see the note there (issues #46, #54).
+#define PUSH_CODE_LOG_RX_DATA   0x88
+
 MultiTransportCompanionInterface::MultiTransportCompanionInterface()
   : _tcp_port(0), _ws_port(0), _tcp_started(false), _ws_started(false), _tcp_enabled(true), _isEnabled(false), _broadcast(false), _last_reply_target(REPLY_TARGET_USB), _ota_tcp_suspended(false), _ota_ws_suspended(false), _ota_ws_listen_paused(false)
 #ifdef BLE_PIN_CODE
@@ -329,7 +333,12 @@ size_t MultiTransportCompanionInterface::writeFrameToAll(const uint8_t src[], si
   if (_usb.isConnected() && _usb.writeFrame(src, len) != len)
     all_ok = false;
 #ifdef BLE_PIN_CODE
-  if (_ble_begun && _ble_enabled && _ble.isConnected() && _ble.writeFrame(src, len) != len)
+  // The per-packet RX log floods BLE's ~16 frames/sec budget on a busy mesh, starving
+  // the frames that matter — chat messages + admin responses (issues #46, #54). The
+  // MeshCore app doesn't consume the RX log, so keep it OFF BLE; USB/TCP/WS (far more
+  // bandwidth) still receive it for the on-device Monitor app / diagnostics.
+  const bool skip_ble = (len > 0 && src[0] == PUSH_CODE_LOG_RX_DATA);
+  if (!skip_ble && _ble_begun && _ble_enabled && _ble.isConnected() && _ble.writeFrame(src, len) != len)
     all_ok = false;
 #endif
   if (_tcp_started && _tcp.connectedCount() > 0 && _tcp.writeToAllClients(src, len) != len)
