@@ -101,6 +101,7 @@
   #if defined(ESP32)
     #include <Preferences.h>
     #include <helpers/esp32/SdNvsPrefs.h>   // NVS-or-SD prefs backend (Launcher-safe)
+    #include "helpers/esp32/WdtHeavyGuard.h" // shared ref-counted core-0 WDT suspend (history/backup saves + core saveContacts)
     // QUOTED on purpose: the vendored core lib ships a STALE copy of this header in
     // its include path, so an angle include picks that up and misses accessors we
     // add here (e.g. the signal-probe prefs). Quotes force the local src/ copy.
@@ -7444,24 +7445,11 @@ static void doExportBackupFile(const char* fname);   // write a backup (SD if a 
 // so a bounded-but-slow GC pass can't reset the device. The same pattern the
 // file-manager format/paste paths already use. Ref-counted so a nested guard
 // (import -> persistHistoryNow -> saveThreadsToStorage/saveMsgsToStorage) doesn't re-enable early.
-static int s_wdt_heavy_depth = 0;
-// IMPORTANT: touch ONLY core 0's IDLE-task WDT here. In the Arduino S3 build
-// only core 0's idle task is subscribed to the task watchdog
-// (CHECK_IDLE_TASK_CPU1 is off), so disableCore1WDT() merely fails ("Failed to
-// remove Core 1 IDLE task from WDT") while enableCore1WDT() *newly subscribes*
-// IDLE1 — arming a core-1 watchdog that didn't exist before. A later
-// multi-second UI-thread flash burst (SPIFFS GC during a history save) then
-// starves IDLE1 and reboots (task_wdt: IDLE1). i.e. the old guard CAUSED the
-// very reboot it was meant to prevent. Leaving core 1 alone restores the
-// Arduino default (loopTask not WDT-watched), so the slow write just stalls
-// the UI briefly instead of rebooting.
-static inline void wdtHeavyBegin() {
-  if (s_wdt_heavy_depth++ == 0) { disableCore0WDT(); }
-}
-static inline void wdtHeavyEnd() {
-  if (s_wdt_heavy_depth > 0 && --s_wdt_heavy_depth == 0) { enableCore0WDT(); }
-}
-struct WdtHeavyGuard { WdtHeavyGuard() { wdtHeavyBegin(); } ~WdtHeavyGuard() { wdtHeavyEnd(); } };
+// wdtHeavyBegin/wdtHeavyEnd + WdtHeavyGuard now live in the shared header
+// helpers/esp32/WdtHeavyGuard.h (included near the top of this file) so the core
+// DataStore::saveContacts shares the SAME ref-count as these UI history/backup
+// saves: a backup import that itself calls saveContacts stays balanced and never
+// re-arms the watchdog early. The core-0-only rationale is documented there.
 
 // --- Settings row label helper --------------------------------------------
 // The settings detail pages lay rows out with a manual y-cursor and used to

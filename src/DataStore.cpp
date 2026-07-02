@@ -3,6 +3,7 @@
 #include "DataStore.h"
 #if defined(ESP32)
 #include <SD.h>
+#include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
 #endif
 
 #if defined(EXTRAFS) || defined(QSPIFLASH)
@@ -70,6 +71,38 @@ void DataStore::begin() {
 #else
   // init 'blob store' support
   _fs->mkdir("/bl");
+  #if defined(ESP32)
+  // One-time migration: when a secondary FS is active (an SD card is present)
+  // but contacts/channels still live on the primary FS from an earlier build,
+  // copy them onto the card ONCE and delete the primary copies. This preserves
+  // the user's contact list while getting the frequently-rewritten files off a
+  // small/near-full SPIFFS — whose garbage collection can otherwise stall the
+  // loop task for seconds during saveContacts and trip the task watchdog
+  // (the beta_25 reboot loop). Identity + prefs stay on _fs and never move.
+  // No-op once the card already holds the files, and a safe no-op on boards
+  // whose primary-FS metadata can't confirm the source exists (e.g. P4 FFat).
+  if (_fsExtra) {
+    static const char* const kMoveFiles[] = { "/contacts3", "/channels2" };
+    for (const char* nm : kMoveFiles) {
+      if (_fsExtra->exists(nm)) continue;       // already on the card
+      if (!_fs->exists(nm))     continue;       // nothing to move
+      File in  = openRead(_fs, nm);
+      File out = openWrite(_fsExtra, nm);
+      bool ok = in && out;
+      if (ok) {
+        uint8_t buf[256];
+        int n;
+        while ((n = in.read(buf, sizeof(buf))) > 0) {
+          if (out.write(buf, (size_t)n) != (size_t)n) { ok = false; break; }
+        }
+      }
+      if (in)  in.close();
+      if (out) out.close();
+      if (ok)  _fs->remove(nm);                            // reclaim SPIFFS space
+      else if (_fsExtra->exists(nm)) _fsExtra->remove(nm); // don't leave a partial copy
+    }
+  }
+  #endif
 #endif
 }
 
@@ -382,6 +415,17 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 }
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+#if defined(ESP32)
+  // A full/fragmenting contacts write on SPIFFS can trigger a multi-second GC
+  // pass that disables the flash cache and starves core 0's idle task, tripping
+  // the task watchdog (the beta_25 reboot loop, confirmed by coredump: loopTask
+  // stuck in spiffs_gc_clean under this exact call). Suspend that watchdog for
+  // the write so a bounded-but-slow pass stalls the UI instead of rebooting. The
+  // ref-count is shared with the UI history/backup guards, so a backup import
+  // that calls saveContacts stays balanced. On SD-routed devices this is cheap
+  // (FAT has no such GC); it matters most for card-less SPIFFS devices.
+  WdtHeavyGuard _wdt;
+#endif
   File file = openWrite(_getContactsChannelsFS(), "/contacts3");
   if (file) {
     uint32_t idx = 0;

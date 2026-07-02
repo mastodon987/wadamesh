@@ -362,23 +362,45 @@ void setup() {
          SPIFFS.exists("/identity/_main.id"));
     bool fresh_install = !use_sd_pref && !setup_done && !spiffs_has_data;
 
-    bool want_sd = !spiffs_ok      // no usable SPIFFS partition -> must use SD
-                || use_sd_pref     // user opted in
-                || fresh_install;  // brand-new device: try SD first
+    // Move the WHOLE store (identity/prefs/contacts) to SD:/meshcomod when the
+    // device has no usable SPIFFS, the user opted in, or it's a brand-new device.
+    bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install;
+
     SPIClass* _spi = tdeckSharedSPI();
-    if (want_sd && _spi) {
-      for (int a = 0; a < 4 && !sd_storage; ++a) {   // short mount ladder (cold cards)
+    bool sd_mounted = false;
+    if (_spi) {
+      // Try to mount the card on EVERY boot now (not just the full-adoption case):
+      // even a device that keeps identity on SPIFFS wants its churn-heavy
+      // contacts/channels on the card. Full 4-try ladder for the cold-card
+      // first-run adoption; a shorter 2-try for the contacts-overflow case so a
+      // card-less device only pays ~260 ms.
+      int tries = want_full_sd ? 4 : 2;
+      for (int a = 0; a < tries && !sd_mounted; ++a) {   // short mount ladder (cold cards)
         SD.end();
         delay(a == 0 ? 40 : 220);
-        if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 3) && SD.cardType() != CARD_NONE) {
-          sd_storage = store.useSdStorage();
-        }
+        if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 3) && SD.cardType() != CARD_NONE)
+          sd_mounted = true;
       }
-      // On a genuine first run, persist the auto-pick so the "Store data on SD"
-      // toggle reflects it and the choice sticks on every later boot.
-      if (fresh_install && sd_storage && !use_sd_pref) {
-        Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
-        Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+    }
+    if (sd_mounted) {
+      if (want_full_sd) {
+        sd_storage = store.useSdStorage();
+        // On a genuine first run, persist the auto-pick so the "Store data on SD"
+        // toggle reflects it and the choice sticks on every later boot.
+        if (fresh_install && sd_storage && !use_sd_pref) {
+          Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
+          Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+        }
+      } else {
+        // Upgraded device: identity + prefs stay on SPIFFS (no node-identity
+        // change, safe if the card is later pulled), but route the frequently
+        // rewritten contacts + channels to the card. On a near-full 3.375 MB
+        // SPIFFS every 5-second saveContacts triggers a multi-second GC pass
+        // that starves the loop task and trips the task watchdog (the beta_25
+        // reboot loop). DataStore::begin() migrates the existing SPIFFS copies
+        // to the card once, so the contact list is preserved.
+        store.setSecondaryFS(&SD);
+        Serial.println("[BOOT] contacts/channels -> SD card (identity/prefs stay on SPIFFS)");
       }
     }
   }
