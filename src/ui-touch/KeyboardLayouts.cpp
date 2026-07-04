@@ -370,6 +370,36 @@ static const lv_btnmatrix_ctrl_t kb_it_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
+/* Czech keeps plain QWERTY (same physical layout as English) — háček/čárka/
+ * kroužek diacritics come from the long-press accent popup, same as German. */
+static const char* kb_cs_lower[] = {
+    "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", LV_SYMBOL_NEW_LINE, "\n",
+    "_", "-", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_cs_lower_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
+static const char* kb_cs_upper[] = {
+    "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", LV_SYMBOL_NEW_LINE, "\n",
+    "_", "-", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_cs_upper_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
 struct OsKeyboardLayout {
     KeyboardLayoutId id;
     const char*      name;
@@ -416,6 +446,9 @@ static const OsKeyboardLayout k_os_layouts[] = {
     { KeyboardLayoutId::IT, "IT",
       kb_it_lower, kb_it_lower_ctrl,
       kb_it_upper, kb_it_upper_ctrl },
+    { KeyboardLayoutId::CS, "CS",
+      kb_cs_lower, kb_cs_lower_ctrl,
+      kb_cs_upper, kb_cs_upper_ctrl },
 };
 
 /* ================================================================
@@ -440,6 +473,7 @@ static const HwKeyboardLayout k_hw_layouts[] = {
     { KeyboardLayoutId::DE, "DE" },
     { KeyboardLayoutId::ES, "ES" },
     { KeyboardLayoutId::IT, "IT" },
+    { KeyboardLayoutId::CS, "CS" },
 };
 
 /* Bulgarian phonetic mapping for T-Deck.
@@ -750,6 +784,9 @@ static const HwPhoneticMap k_hw_maps[KEYBOARD_LAYOUT_COUNT] = {
     /* DE */ { hw_de_lower,  hw_de_upper,  hw_de_digits,   hw_de_digits_shift },
     /* ES */ { hw_es_lower,  hw_es_upper,  hw_es_digits,   hw_es_digits_shift },
     /* IT */ { hw_it_lower,  hw_it_upper,  hw_it_digits,   hw_it_digits_shift },
+    /* CS: plain QWERTY, same as English — háček/čárka/kroužek diacritics
+     * come from the long-press accent popup, so no physical remap needed. */
+    /* CS */ { nullptr,      nullptr,      nullptr,        nullptr },
 };
 
 const char* keyboardLayoutMapHwKey(KeyboardLayoutId id, int key, bool shifted) {

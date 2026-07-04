@@ -4556,13 +4556,15 @@ static const char* const kAccO[]   = {"ò","ó","ô","ö","õ","ø"};
 static const char* const kAccO_u[] = {"Ò","Ó","Ô","Ö","Õ","Ø"};
 static const char* const kAccU[]   = {"ù","ú","û","ü","ů"};
 static const char* const kAccU_u[] = {"Ù","Ú","Û","Ü","Ů"};
-static const char* const kAccN[]   = {"ñ","ń"};
-static const char* const kAccN_u[] = {"Ñ","Ń"};
+static const char* const kAccN[]   = {"ñ","ń","ň"};
+static const char* const kAccN_u[] = {"Ñ","Ń","Ň"};
 static const char* const kAccC[]   = {"ç","č","ć"};
 static const char* const kAccC_u[] = {"Ç","Č","Ć"};
 static const char* const kAccS[]   = {"ß","ś","š"};
 static const char* const kAccY[]   = {"ý","ÿ"};
 // Czech carons / ring — base letters that otherwise carry no Latin-1 accent.
+static const char* const kAccD[]   = {"ď"};
+static const char* const kAccD_u[] = {"Ď"};
 static const char* const kAccT[]   = {"ť"};
 static const char* const kAccT_u[] = {"Ť"};
 static const char* const kAccZ[]   = {"ž","ż","ź"};
@@ -4576,8 +4578,9 @@ struct AccentSet { char key; const char* const* v; uint8_t n; };
 static const AccentSet kAccentSets[] = {
   {'a',kAccA,7},{'A',kAccA_u,7},{'e',kAccE,6},{'E',kAccE_u,6},
   {'i',kAccI,4},{'I',kAccI_u,4},{'o',kAccO,6},{'O',kAccO_u,6},
-  {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,2},{'N',kAccN_u,2},
+  {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,3},{'N',kAccN_u,3},
   {'c',kAccC,3},{'C',kAccC_u,3},{'s',kAccS,3},{'S',kAccS_u,2},{'y',kAccY,2},
+  {'d',kAccD,1},{'D',kAccD_u,1},
   {'t',kAccT,1},{'T',kAccT_u,1},{'z',kAccZ,3},{'Z',kAccZ_u,3},
   {'l',kAccL,1},{'L',kAccL_u,1},{'r',kAccR,1},{'R',kAccR_u,1},
 };
