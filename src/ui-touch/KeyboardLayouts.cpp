@@ -370,8 +370,8 @@ static const lv_btnmatrix_ctrl_t kb_it_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
-/* Czech keeps plain QWERTY (same physical layout as English) — háček/čárka/
- * kroužek diacritics come from the long-press accent popup, same as German. */
+/* Czech keeps plain QWERTY (same physical layout as English) — 
+ * diacritics come from the long-press accent popup, same as German. */
 static const char* kb_cs_lower[] = {
     "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", LV_SYMBOL_NEW_LINE, "\n",
@@ -784,7 +784,7 @@ static const HwPhoneticMap k_hw_maps[KEYBOARD_LAYOUT_COUNT] = {
     /* DE */ { hw_de_lower,  hw_de_upper,  hw_de_digits,   hw_de_digits_shift },
     /* ES */ { hw_es_lower,  hw_es_upper,  hw_es_digits,   hw_es_digits_shift },
     /* IT */ { hw_it_lower,  hw_it_upper,  hw_it_digits,   hw_it_digits_shift },
-    /* CS: plain QWERTY, same as English — háček/čárka/kroužek diacritics
+    /* CS: plain QWERTY, same as English —  diacritics
      * come from the long-press accent popup, so no physical remap needed. */
     /* CS */ { nullptr,      nullptr,      nullptr,        nullptr },
 };
