@@ -8603,8 +8603,20 @@ static void sysInfoText(char* buf, size_t cap) {
   const uint32_t sketch_size = 0;   // TODO(device): surface the real AppFS app size
   const uint32_t sketch_free = 0;
 #else
-  const uint32_t sketch_size     = ESP.getSketchSize();
-  const uint32_t sketch_free     = ESP.getFreeSketchSpace();
+  // Each of these runs esp_image_verify — a SHA walk over the whole ~3 MB app
+  // image (~190 ms per call). At the 1 Hz About refresh the pair was a constant
+  // ~390 ms/s UI stall (the "ui:sbar" entries field testers photographed) and it
+  // flooded the stall ring, hiding the entries that mattered. The running image
+  // cannot change while running, so pay the walk once and cache.
+  static uint32_t s_sketch_size_c = 0, s_sketch_free_c = 0;
+  static bool s_sketch_known = false;
+  if (!s_sketch_known) {
+    s_sketch_size_c = ESP.getSketchSize();
+    s_sketch_free_c = ESP.getFreeSketchSpace();
+    s_sketch_known  = true;
+  }
+  const uint32_t sketch_size     = s_sketch_size_c;
+  const uint32_t sketch_free     = s_sketch_free_c;
 #endif
   p += snprintf(buf + p, cap - p,
                 "Flash\n  chip: %u MB\n  sketch: %u KB used\n  app slot free: %u KB\n\n",
@@ -12790,6 +12802,14 @@ static void actionSheetFavoriteCb(lv_event_t* e) {
 #if defined(ESP32)
   bool was_fav = touchPrefsIsFavorite(c.id.pub_key);
   bool now_fav = touchPrefsSetFavorite(c.id.pub_key, !was_fav);
+  if (!was_fav && !now_fav) {
+    // Add refused: the favorites table is at capacity, nothing changed — saying
+    // "Removed from favorites" here (the plain now_fav mapping) is a lie.
+    char full_msg[48];
+    snprintf(full_msg, sizeof full_msg, TR("Favorites full (max %d)"), TOUCH_FAVORITES_MAX);
+    g_lv.task->showAlert(full_msg, 1500);
+    return;
+  }
   g_lv.task->showAlert(now_fav ? TR("Added to favorites") : TR("Removed from favorites"), 1100);
   // Force a list rebuild so the star (or its removal) shows immediately — a plain
   // refresh hits the no-change cache (the contact count is unchanged by a fav toggle).
