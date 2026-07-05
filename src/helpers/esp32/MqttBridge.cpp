@@ -10,10 +10,29 @@ MqttBridge mqtt_bridge;
 #include <WiFi.h>
 #include <stdio.h>
 #include <string.h>
+#include <lwip/sockets.h>
 #include "esp_random.h"
 #include "mbedtls/gcm.h"
 #include "mbedtls/md.h"
 #include "mbedtls/base64.h"
+
+// Only hand bytes to lwIP when the socket can accept them right now (zero-timeout
+// select). Otherwise WiFiClient::write() blocks in 1 s select() retries against a
+// broker that stopped ACKing — on the loop thread that is a visible UI freeze per
+// publish. A refused write fails the publish; PubSubClient then flags the
+// connection down and the (async) reconnect path takes over.
+size_t MqttNbClient::write(const uint8_t* buf, size_t size) {
+    int fd_ = fd();
+    if (fd_ < 0) return 0;
+    fd_set wset;
+    FD_ZERO(&wset);
+    FD_SET(fd_, &wset);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    if (select(fd_ + 1, NULL, &wset, NULL, &tv) <= 0 || !FD_ISSET(fd_, &wset)) return 0;
+    return WiFiClient::write(buf, size);
+}
 
 // Read every field from the "mqtt" NVS namespace into the members. isKey() guards
 // avoid the [E] NOT_FOUND log spam that getString emits for absent keys on the
@@ -86,13 +105,27 @@ bool MqttBridge::reconnect() {
     return ok;
 }
 
+// reconnect() blocks on DNS + TCP connect + CONNACK (2-10 s against an unreachable
+// broker) — never run it on the loop thread, it drives LVGL. One-shot task instead;
+// _connecting hands _mqtt/_wc to the task and back.
+void MqttBridge::reconnectTask(void* arg) {
+    MqttBridge* self = (MqttBridge*)arg;
+    self->reconnect();
+    self->_connecting = false;
+    vTaskDelete(nullptr);
+}
+
 void MqttBridge::loop() {
-    if (!_enabled) return;
+    if (!_enabled || _connecting) return;
     if (!_mqtt.connected()) {
         uint32_t now = millis();
         if ((uint32_t)(now - _lastReconnectMs) >= RECONNECT_INTERVAL_MS) {
             _lastReconnectMs = now;
-            reconnect();
+            _connecting = true;
+            if (xTaskCreatePinnedToCore(reconnectTask, "mqtt_conn", 6144, this,
+                                        1, nullptr, 0) != pdPASS) {
+                _connecting = false;   // task OOM — try again next interval
+            }
         }
         return;
     }
@@ -128,7 +161,7 @@ bool MqttBridge::sealToB64(const char* plain, char* out, size_t outCap) {
 }
 
 void MqttBridge::pub(const char* subtopic, const char* json) {
-    if (!_enabled || !_mqtt.connected()) return;
+    if (!_enabled || _connecting || !_mqtt.connected()) return;
     char topic[80];
     snprintf(topic, sizeof(topic), "wadamesh/%s/%s", _nodeHex, subtopic);
     if (_encOn) {
@@ -158,7 +191,7 @@ void MqttBridge::escapeJson(const char* src, char* dst, size_t dstLen) {
 
 void MqttBridge::publishDM(const char* senderName, const uint8_t* senderKey32,
                             float snr, uint8_t hops, uint32_t ts, const char* text) {
-    if (!_enabled || !_pubDm || !_mqtt.connected()) return;   // DMs are opt-in
+    if (!_enabled || !_pubDm || _connecting || !_mqtt.connected()) return;   // DMs are opt-in
     char keyHex[13] = {};
     for (int i = 0; i < 6; ++i) snprintf(keyHex + i * 2, 3, "%02x", senderKey32[i]);
 
@@ -175,7 +208,7 @@ void MqttBridge::publishDM(const char* senderName, const uint8_t* senderKey32,
 
 void MqttBridge::publishChannel(int channelIdx, const char* channelName,
                                  float snr, uint8_t hops, uint32_t ts, const char* text) {
-    if (!_enabled || !_pubChannel || !_mqtt.connected()) return;   // channel publish toggle
+    if (!_enabled || !_pubChannel || _connecting || !_mqtt.connected()) return;   // channel publish toggle
     char safeName[48], safeText[300];
     escapeJson(channelName, safeName, sizeof(safeName));
     escapeJson(text,        safeText, sizeof(safeText));
@@ -204,6 +237,10 @@ void MqttBridge::saveConfig(const char* host, uint16_t port,
 }
 
 void MqttBridge::reloadConfig() {
+    // A connect attempt may be in flight on the one-shot task; PubSubClient is not
+    // thread-safe, so wait it out (bounded: DNS + TCP + CONNACK <= ~10 s, and it
+    // only overlaps when Save lands inside an attempt window on a dead broker).
+    while (_connecting) delay(10);
     if (_mqtt.connected()) _mqtt.disconnect();
     loadConfig();
     if (!_enabled) { Serial.println("[MQTT] disabled"); return; }
