@@ -1681,6 +1681,71 @@ void touchPrefsSetChannelMute(const char* name, uint8_t flags) {
   s_begun = s_prefs.begin(TOUCH_NS, true);
 }
 
+// ---- Per-channel avatar emoji (chat-list avatar override) ----
+// Same keyed-blob pattern as the mute table above: 32-byte name + 16-byte UTF-8
+// glyph (16 covers ZWJ sequences). No entry = auto (the two-letter avatar).
+// 24 entries x 48 B = 1152 B, safely under the SdNvsPrefs 2048-byte blob cap.
+static const int   CHE_NAME  = TOUCH_CHMUTE_NAME;
+static const int   CHE_GLYPH = 16;
+static const int   CHE_ENTRY = CHE_NAME + CHE_GLYPH;
+static const int   CHE_MAX   = 24;
+static const char* KEY_CHE   = "chemoji";
+static uint8_t     s_che[CHE_MAX * CHE_ENTRY];
+static int         s_che_n = -1;   // -1 = not loaded yet
+static void cheLoad() {
+  if (s_che_n >= 0) return;
+  s_che_n = 0;
+  if (!s_begun) touchPrefsBegin();
+  if (!s_prefs.isKey(KEY_CHE)) return;
+  size_t n = s_prefs.getBytes(KEY_CHE, s_che, sizeof(s_che));
+  if (n == 0 || n > sizeof(s_che)) { s_che_n = 0; return; }
+  s_che_n = (int)(n / CHE_ENTRY);
+}
+static int cheFind(const char* name) {
+  cheLoad();
+  for (int i = 0; i < s_che_n; ++i)
+    if (strncmp((const char*)&s_che[i * CHE_ENTRY], name, CHE_NAME) == 0) return i;
+  return -1;
+}
+bool touchPrefsGetChannelEmoji(const char* name, char* out, size_t cap) {
+  if (out && cap) out[0] = '\0';
+  if (!name || !name[0] || !out || cap == 0) return false;
+  int i = cheFind(name);
+  if (i < 0) return false;
+  const char* g = (const char*)&s_che[i * CHE_ENTRY + CHE_NAME];
+  size_t n = strnlen(g, CHE_GLYPH);
+  if (n >= cap) n = cap - 1;
+  memcpy(out, g, n);
+  out[n] = '\0';
+  return out[0] != '\0';
+}
+void touchPrefsSetChannelEmoji(const char* name, const char* utf8) {
+  if (!name || !name[0]) return;
+  cheLoad();
+  int i = cheFind(name);
+  if (!utf8 || !utf8[0]) {                       // clear -> back to auto letters
+    if (i < 0) return;
+    for (int j = i; j + 1 < s_che_n; ++j) memcpy(&s_che[j * CHE_ENTRY], &s_che[(j + 1) * CHE_ENTRY], CHE_ENTRY);
+    --s_che_n;
+  } else {
+    if (i < 0) {
+      if (s_che_n >= CHE_MAX) return;            // cap reached
+      i = s_che_n++;
+      memset(&s_che[i * CHE_ENTRY], 0, CHE_ENTRY);
+      strncpy((char*)&s_che[i * CHE_ENTRY], name, CHE_NAME - 1);
+    }
+    memset(&s_che[i * CHE_ENTRY + CHE_NAME], 0, CHE_GLYPH);
+    strncpy((char*)&s_che[i * CHE_ENTRY + CHE_NAME], utf8, CHE_GLYPH - 1);
+  }
+  s_prefs.end();
+  if (s_prefs.begin(TOUCH_NS, false)) {
+    if (s_che_n == 0) s_prefs.remove(KEY_CHE);
+    else              s_prefs.putBytes(KEY_CHE, s_che, (size_t)(s_che_n * CHE_ENTRY));
+    s_prefs.end();
+  }
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+}
+
 // Remembered repeater admin passwords --------------------------------------
 //
 // Layout: single NVS blob "rpw" of up to TOUCH_REPEATER_PW_MAX records,

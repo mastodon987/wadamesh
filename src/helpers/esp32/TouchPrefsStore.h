@@ -383,6 +383,8 @@ constexpr uint8_t TOUCH_CHMUTE_MSG = 0x1;
 constexpr uint8_t TOUCH_CHMUTE_MEN = 0x2;
 uint8_t touchPrefsGetChannelMute(const char* name);
 void    touchPrefsSetChannelMute(const char* name, uint8_t flags);
+bool    touchPrefsGetChannelEmoji(const char* name, char* out, size_t cap);  // chat-list avatar override; false/empty = auto letters
+void    touchPrefsSetChannelEmoji(const char* name, const char* utf8);       // empty/null clears back to auto
 
 /** Generic NVS blob (key/value). Used to persist the discovered-nodes list so
  *  it survives a reboot. getBlob returns the byte count copied (0 if absent). */

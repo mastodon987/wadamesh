@@ -5272,6 +5272,29 @@ static void threadSheetResetPathCb(lv_event_t* e) {
   }
 }
 
+// Chat-icon chooser (channels): tap picks an emoji for the chat-list avatar via the
+// emoji sheet in pick mode; long-press resets to the automatic two-letter avatar.
+static void openEmojiPickerPick(void (*cb)(const char* utf8), const char* title);   // defined with the emoji sheet below
+static void threadSheetIconPicked(const char* g) {
+  char nm[UITask::MAX_THREAD_NAME + 1] = "";
+  if (!channelLongSheetName(nm, sizeof nm)) return;
+  touchPrefsSetChannelEmoji(nm, g);
+  g_lv.dirty_threads = true;                       // chat list re-renders the avatar
+  if (g_lv.task) g_lv.task->showAlert(TR("Chat icon set"), 1200);
+}
+static void threadSheetIconCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  openEmojiPickerPick(threadSheetIconPicked, "Chat icon");
+}
+static void threadSheetIconResetCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+  char nm[UITask::MAX_THREAD_NAME + 1] = "";
+  if (!channelLongSheetName(nm, sizeof nm)) return;
+  touchPrefsSetChannelEmoji(nm, "");
+  g_lv.dirty_threads = true;
+  if (g_lv.task) g_lv.task->showAlert(TR("Chat icon reset to letters"), 1400);
+}
+
 // Per-thread settings sheet (DM or channel) — opened by long-press AND the per-row gear AND the
 // in-channel cog, so all are the SAME screen. Mark-as-read, mute messages / @ mentions, region &
 // scope, share secret, blocked users, remove/delete.
@@ -5309,7 +5332,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
 #else
   const int card_w  = 232;
   const int btn_h   = 30;
-  const int btn_gap = 6;
+  const int btn_gap = 4;    // 4 (was 6): the 7-item channel grid + danger row must fit the T-Deck's ~206 px
   const int title_h = 28;
   const int pad     = 6;
   const lv_font_t* row_font = &g_font_12;
@@ -5327,7 +5350,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   // spans the full width at the bottom. Channel: mark-read + region + the two
   // mutes + share + blocked = 6 grid items (3 rows). Room: mark-read +
   // login-again + reset-path + blocked = 4 (2 rows). DM: 3 (2 rows).
-  const int grid_items = is_channel ? 6 : (is_room_thread ? 4 : 3);
+  const int grid_items = is_channel ? 7 : (is_room_thread ? 4 : 3);   // channels: +Chat icon
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + pad;
   const int max_h = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
@@ -5423,6 +5446,9 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     chmuteRefreshLabels();
     mk(LV_SYMBOL_SHUFFLE  "  Share secret",   channelLongSheetShareCb,   0);
     mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb, 0);
+    // Chat-list avatar emoji: tap = pick, long-press = back to the two-letter auto avatar.
+    lv_obj_t* icb = mk(LV_SYMBOL_IMAGE "  Chat icon", threadSheetIconCb, 0);
+    if (icb) lv_obj_add_event_cb(icb, threadSheetIconResetCb, LV_EVENT_LONG_PRESSED, nullptr);
     mk_full(LV_SYMBOL_TRASH "  Remove channel", channelLongSheetDeleteCb, 0xB23A48);
   } else {
     if (is_room_thread)
@@ -5654,11 +5680,17 @@ static constexpr int k_special_count = (int)(sizeof(k_special_items) / sizeof(k_
 static const char* const* s_glyph_items = k_emoji_items;
 static int                 s_glyph_count = k_emoji_count;
 
+// Pick-mode: when set, the next chosen glyph is handed to this callback instead
+// of being inserted into a textarea (used by the chat-icon chooser). Dismissing
+// the sheet without choosing cancels (the closer clears it).
+static void (*s_emoji_pick_cb)(const char* utf8) = nullptr;
+
 static void closeEmojiSheet() {
   popupClose(&s_emoji_sheet);
   s_emoji_target_ta = nullptr;
   s_emoji_grid = nullptr;
   s_emoji_sel = -1;
+  s_emoji_pick_cb = nullptr;
 }
 static void emojiSheetCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -5669,6 +5701,14 @@ static void emojiSheetCloseCb(lv_event_t* e) {
 // Insert item `idx` into the active composer and close. Shared by finger-tap
 // (emojiPickCb) and the trackball selector (emojiSelectorClick).
 static void emojiInsertIndex(int idx) {
+  if (s_emoji_pick_cb) {
+    void (*cb)(const char*) = s_emoji_pick_cb;
+    s_emoji_pick_cb = nullptr;                   // one-shot; also survives the closer's clear
+    const char* g = (idx >= 0 && idx < s_glyph_count) ? s_glyph_items[idx] : nullptr;
+    closeEmojiSheet();
+    if (g) cb(g);
+    return;
+  }
   lv_obj_t* ta = s_emoji_target_ta;
   if (idx < 0 || idx >= s_glyph_count || !ta) { closeEmojiSheet(); return; }
   const char* g = s_glyph_items[idx];
@@ -5683,6 +5723,14 @@ static void emojiInsertIndex(int idx) {
 static void emojiPickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   emojiInsertIndex((int)(intptr_t)lv_event_get_user_data(e));
+}
+
+// Open the emoji sheet in PICK mode: the chosen glyph goes to `cb` (not a textarea).
+// Defined after openEmojiPicker; forward-declared next to the thread-sheet code.
+static void openEmojiPicker(lv_obj_t* ta, const char* const* items, int count, const char* picker_title);
+static void openEmojiPickerPick(void (*cb)(const char* utf8), const char* title) {
+  openEmojiPicker(nullptr, k_emoji_items, k_emoji_count, title);   // resets pick state via closeEmojiSheet()
+  s_emoji_pick_cb = cb;                                            // arm AFTER the open (the closer clears it)
 }
 
 // Paint the trackball-selected cell highlighted and the rest normal, and keep
@@ -25491,9 +25539,11 @@ static void refreshChatList(LvChatPanel& p) {
   // every periodic refresh, which resets the scroll to the top — so skip the rebuild
   // entirely when nothing changed (the common case while you're just scrolling), and
   // otherwise preserve the scroll position across it.
+  const bool compact_rows = touchPrefsGetCompactChat();   // compact = today's dense contact-style rows; off = WhatsApp-style
   uint32_t sig = 2166136261u;
   auto mix = [&sig](uint32_t v) { sig = (sig ^ v) * 16777619u; };
   mix((uint32_t)count);
+  mix(compact_rows ? 0xC0FFEEu : 1u);
   for (int i = 0; i < count; ++i) {
     bool ch = false; uint16_t unread = 0; uint32_t ts = 0;
     char nm[UITask::MAX_THREAD_NAME + 1];
@@ -25501,6 +25551,11 @@ static void refreshChatList(LvChatPanel& p) {
     mix((uint32_t)idxs[i]); mix(unread); mix(ts);
     mix((ch ? 2u : 0u) | (g_lv.task->threadHasMention(idxs[i]) ? 1u : 0u));
     for (const char* s = nm; *s; ++s) mix((uint8_t)*s);
+    if (ch && !compact_rows) {   // avatar-emoji change must re-render the row
+      char eb[20];
+      if (touchPrefsGetChannelEmoji(nm, eb, sizeof eb))
+        for (const char* s2 = eb; *s2; ++s2) mix((uint8_t)*s2);
+    }
   }
   if (sig == p.list_sig && lv_obj_get_child_cnt(p.list_cont) > 0) return;   // nothing changed
   p.list_sig = sig;
@@ -25525,11 +25580,14 @@ static void refreshChatList(LvChatPanel& p) {
     char san_name[UITask::MAX_THREAD_NAME + 8];
     copyUtf8ReplacingMissingGlyphs(&g_font_14, san_name, sizeof(san_name), name);
 
+    lv_obj_t* btn = nullptr;
+    if (compact_rows) {
+    // ---- Compact rows (the dense contact-style list) ----
     // Name only — the unread count is shown as a right-aligned badge below.
     // DM = single person; channel = group of people (renders via the person_font
     // splice on g_font_14). Replaces the old envelope / loop-arrow glyphs.
     const char* icon = ch ? TOUCH_SYM_GROUP : TOUCH_SYM_PERSON;
-    lv_obj_t* btn = lv_list_add_btn(p.list_cont, icon, san_name);
+    btn = lv_list_add_btn(p.list_cont, icon, san_name);
 
     // Match the Contacts-tab row recipe exactly (Kaj: one list design across the
     // tabs, and the same 34 px height so more threads fit per screen): panel fill,
@@ -25634,6 +25692,173 @@ static void refreshChatList(LvChatPanel& p) {
       lv_obj_set_style_text_color(at, lv_color_hex(COLOR_MENTION), LV_PART_MAIN);
       lv_obj_align(at, LV_ALIGN_RIGHT_MID, (lv_coord_t)(unread > 0 ? r_edge - 38 : r_edge), 0);
     }
+    } else {
+    // ---- WhatsApp-style rows (default, compact chat OFF) ----
+    // Round avatar in the thread's signature colour with a stable per-name emoji,
+    // name + last-message preview stacked next to it, time top-right, unread
+    // pill + @ below the time, gear on the far edge.
+    btn = lv_list_add_btn(p.list_cont, nullptr, nullptr);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(btn, lv_color_hex(0x141516), LV_PART_MAIN);
+    lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+    lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_min_height(btn, 56, LV_PART_MAIN);
+    lv_obj_set_height(btn, 56);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Avatar: same FNV-1a hue family as the chat-bubble colours (see
+    // usernameBubbleColors), lifted in value so the disc reads on the dark panel.
+    uint32_t hh = 2166136261u;
+    for (const char* s2 = name; *s2; ++s2) { hh ^= (uint8_t)*s2; hh *= 16777619u; }
+    lv_obj_t* av = lv_obj_create(btn);
+    lv_obj_remove_style_all(av);
+    lv_obj_add_flag(av, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_clear_flag(av, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   // taps fall through to the row
+    lv_obj_set_size(av, 40, 40);
+    lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(av, lv_color_hsv_to_rgb((uint16_t)(hh % 360u), 55, 42), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(av, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(av, LV_ALIGN_LEFT_MID, 8, 0);
+    // Avatar content: a user-chosen emoji for channels (thread sheet -> Chat icon),
+    // otherwise the first two letters of the name (a leading '#' skipped, ASCII
+    // uppercased) — the classic initials avatar.
+    const lv_img_dsc_t* eg = nullptr;
+    char av_glyph[20] = "";
+    if (ch && touchPrefsGetChannelEmoji(name, av_glyph, sizeof av_glyph)) {
+      uint32_t goff = 0;
+      eg = emojiGlyphLookup(_lv_txt_encoded_next(av_glyph, &goff));   // ZWJ glyphs are keyed on their lead codepoint
+    }
+    if (eg) {
+      lv_obj_t* im = lv_img_create(av);
+      lv_img_set_src(im, eg);
+      lv_img_set_zoom(im, 384);          // 16 px baked glyph -> ~24 px in the 40 px disc
+      lv_img_set_antialias(im, true);
+      lv_obj_center(im);
+    } else {
+      char initials[12]; int o = 0, glyphs = 0;
+      const char* q = name;
+      while (*q == '#' || *q == ' ') ++q;
+      while (*q && glyphs < 2 && o < 8) {
+        const uint8_t c = (uint8_t)*q;
+        int len = 1;
+        if (c >= 0xF0) len = 4; else if (c >= 0xE0) len = 3; else if (c >= 0xC0) len = 2;
+        for (int b = 0; b < len && *q; ++b) initials[o++] = *q++;
+        ++glyphs;
+      }
+      initials[o] = '\0';
+      for (char* u = initials; *u; ++u) if ((uint8_t)*u < 0x80) *u = (char)toupper((unsigned char)*u);
+      char av_txt[16];
+      copyUtf8ReplacingMissingGlyphs(&g_font_16, av_txt, sizeof av_txt, initials[0] ? initials : "?");
+      lv_obj_t* fl = lv_label_create(av);
+      lv_label_set_text(fl, av_txt);
+      lv_obj_set_style_text_font(fl, &g_font_16, LV_PART_MAIN);
+      lv_obj_set_style_text_color(fl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_center(fl);
+    }
+
+    // Per-row settings gear on the far right (same behaviour as the compact rows).
+    const lv_coord_t gear_w = 28;
+    {
+      lv_obj_t* gear = lv_btn_create(btn);
+      lv_obj_remove_style_all(gear);
+      lv_obj_add_flag(gear, LV_OBJ_FLAG_IGNORE_LAYOUT);
+      lv_obj_add_flag(gear, NAV_HMOVE_FLAG);
+      lv_obj_set_size(gear, gear_w, 40);
+      lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -2, 0);
+      lv_obj_add_event_cb(gear, threadGearCb, LV_EVENT_CLICKED, &p.ctx_store[i]);
+      lv_obj_t* gl = lv_label_create(gear);
+      lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
+      lv_obj_set_style_text_font(gl, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(gl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_center(gl);
+    }
+
+    // Time, top-right (left of the gear).
+    const lv_coord_t time_x = (lv_coord_t)(-(10 + gear_w));
+    char tbuf[16];
+    formatChatRowTime(tbuf, sizeof(tbuf), ts);
+    lv_coord_t time_w = 0;
+    if (tbuf[0]) {
+      lv_point_t tsz;
+      lv_txt_get_size(&tsz, tbuf, &g_font_12, 0, 0, LV_COORD_MAX, 0);
+      time_w = tsz.x;
+      lv_obj_t* tlbl = lv_label_create(btn);
+      lv_obj_add_flag(tlbl, LV_OBJ_FLAG_IGNORE_LAYOUT);
+      lv_label_set_text(tlbl, tbuf);
+      lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(tlbl, lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
+      lv_obj_align(tlbl, LV_ALIGN_TOP_RIGHT, time_x, 8);
+    }
+
+    // Name (top line) + last-message preview (bottom line), right of the avatar.
+    const lv_coord_t text_x = 8 + 40 + 8;
+    const lv_coord_t name_w = (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - time_w - 24);
+    lv_obj_t* nm2 = lv_label_create(btn);
+    lv_obj_add_flag(nm2, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_label_set_text(nm2, san_name);
+    lv_obj_set_style_text_font(nm2, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm2, lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_long_mode(nm2, LV_LABEL_LONG_DOT);
+    // Fixed ONE-LINE height: with only a width, LONG_DOT lets a long name wrap to
+    // a second line (never truncating) and it overlapped the preview underneath.
+    lv_obj_set_size(nm2, name_w, 18);
+    lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x, 9);
+
+    // Preview: "sender: text" for channels, "You: text" for own DMs, plain text otherwise.
+    char psender[UITask::MAX_SENDER_NAME + 1] = "";
+    char ptext[80] = "";
+    bool pout = false;
+    char preview[120] = "";
+    if (g_lv.task->getThreadLastMessage(idxs[i], psender, sizeof psender, ptext, sizeof ptext, &pout)) {
+      char raw[112];
+      if (ch && psender[0] && !pout) snprintf(raw, sizeof raw, "%s: %s", psender, ptext);
+      else if (pout)                 snprintf(raw, sizeof raw, "%s: %s", TR("You"), ptext);
+      else                           snprintf(raw, sizeof raw, "%s", ptext);
+      // Previews render in a plain 12 px label: strip newlines, replace unbaked
+      // glyphs, and let LONG_DOT ellipsize the rest.
+      for (char* q = raw; *q; ++q) if (*q == '\n' || *q == '\r') *q = ' ';
+      copyUtf8ReplacingMissingGlyphs(&g_font_12, preview, sizeof preview, raw);
+    }
+    lv_obj_t* pv = lv_label_create(btn);
+    lv_obj_add_flag(pv, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_label_set_text(pv, preview[0] ? preview : "");
+    lv_obj_set_style_text_font(pv, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_label_set_long_mode(pv, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60), 16);   // one line, ellipsized
+    lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x, -8);
+
+    // Unread pill bottom-right (under the time), @ to its left on a mention.
+    if (unread > 0) {
+      lv_obj_t* badge = lv_label_create(btn);
+      lv_obj_add_flag(badge, LV_OBJ_FLAG_IGNORE_LAYOUT);
+      char cnt[8];
+      if (unread > 99) snprintf(cnt, sizeof cnt, "99+");
+      else             snprintf(cnt, sizeof cnt, "%u", (unsigned)unread);
+      lv_label_set_text(badge, cnt);
+      lv_obj_set_style_text_font(badge, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(badge, lv_color_hex(0x0A0B0C), LV_PART_MAIN);
+      lv_obj_set_style_bg_color(badge, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_radius(badge, 9, LV_PART_MAIN);
+      lv_obj_set_style_pad_hor(badge, 6, LV_PART_MAIN);
+      lv_obj_set_style_pad_ver(badge, 1, LV_PART_MAIN);
+      lv_obj_align(badge, LV_ALIGN_BOTTOM_RIGHT, time_x, -6);
+    }
+    if (g_lv.task->threadHasMention(idxs[i])) {
+      lv_obj_t* at = lv_label_create(btn);
+      lv_obj_add_flag(at, LV_OBJ_FLAG_IGNORE_LAYOUT);
+      lv_label_set_text(at, TR("@"));
+      lv_obj_set_style_text_font(at, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(at, lv_color_hex(COLOR_MENTION), LV_PART_MAIN);
+      lv_obj_align(at, LV_ALIGN_BOTTOM_RIGHT, (lv_coord_t)(time_x - (unread > 0 ? 34 : 0)), -6);
+    }
+    }
+    if (!btn) continue;
 
     p.ctx_store[i].idx     = idxs[i];
     p.ctx_store[i].channel = ch;
