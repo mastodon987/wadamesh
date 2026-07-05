@@ -24,6 +24,17 @@ public:
 #include <PubSubClient.h>
 #include <WiFiClient.h>
 
+// WiFiClient whose write() refuses to enter the framework's blocking-select path:
+// bytes are only handed to lwIP when the socket can take them right now, so a
+// wedged broker connection (half-open socket, peer stopped ACKing) fails the
+// publish instead of stalling the loop thread ~1 s per write attempt. Same probe
+// as the TCP/WS companion servers.
+class MqttNbClient : public WiFiClient {
+public:
+    size_t write(const uint8_t* buf, size_t size) override;
+    size_t write(uint8_t b) override { return write(&b, 1); }
+};
+
 // Publishes received mesh messages to an MQTT broker over the existing WiFi link.
 //
 // PRIVACY MODEL (mirrors how Meshtastic's MQTT module guards content):
@@ -73,7 +84,7 @@ public:
     void reloadConfig();
 
 private:
-    WiFiClient   _wc;
+    MqttNbClient _wc;
     PubSubClient _mqtt{_wc};
     char     _nodeHex[13] = {};   // 6-byte key → 12 hex chars + '\0'
     bool     _enabled     = false;
@@ -87,12 +98,16 @@ private:
     bool     _encOn       = false;
     uint16_t _port        = 1883;
     uint32_t _lastReconnectMs = 0;
+    // True while the one-shot connect task owns _mqtt/_wc. The loop thread must
+    // not touch either until it clears (PubSubClient is not thread-safe).
+    volatile bool _connecting = false;
 
     static const uint32_t RECONNECT_INTERVAL_MS = 15000;
 
     void loadConfig();             // shared by begin() / reloadConfig()
     void deriveKey();              // _key = SHA-256(_psk); sets _encOn
     bool reconnect();
+    static void reconnectTask(void* arg);   // one-shot task body wrapping reconnect()
     void pub(const char* subtopic, const char* json);  // seals if _encOn
     bool sealToB64(const char* plain, char* out, size_t outCap);
     static void escapeJson(const char* src, char* dst, size_t dstLen);

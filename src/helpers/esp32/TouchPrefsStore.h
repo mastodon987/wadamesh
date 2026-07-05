@@ -157,6 +157,8 @@ bool    touchPrefsSetBootAdvert(bool on);
  * bubbles, so far more history fits on screen. Opt-in, default off (bubbles). */
 bool    touchPrefsGetCompactChat();
 bool    touchPrefsSetCompactChat(bool on);
+uint32_t touchPrefsGetClockFloor();               // monotonic send-timestamp floor (#89)
+bool    touchPrefsSetClockFloor(uint32_t epoch);  // only ever grows; no-op below current
 
 /* Periodic self-advert intervals (the standard MeshCore flood/local advert, on a timer). 0 = off.
  * Flood in hours; local zero-hop in minutes (0 or 60-240). Scheduled in UITask::loop via sendAdvert. */
@@ -381,6 +383,8 @@ constexpr uint8_t TOUCH_CHMUTE_MSG = 0x1;
 constexpr uint8_t TOUCH_CHMUTE_MEN = 0x2;
 uint8_t touchPrefsGetChannelMute(const char* name);
 void    touchPrefsSetChannelMute(const char* name, uint8_t flags);
+bool    touchPrefsGetChannelEmoji(const char* name, char* out, size_t cap);  // chat-list avatar override; false/empty = auto letters
+void    touchPrefsSetChannelEmoji(const char* name, const char* utf8);       // empty/null clears back to auto
 
 /** Generic NVS blob (key/value). Used to persist the discovered-nodes list so
  *  it survives a reboot. getBlob returns the byte count copied (0 if absent). */

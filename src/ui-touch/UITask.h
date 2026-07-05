@@ -30,6 +30,10 @@ enum class TouchUiScreen : uint8_t { Home = 0, ChatInbox = 1, Contacts = 2, Sett
 class UITask : public AbstractUITask {
 public:
   static const int MAX_UI_MESSAGES = 500;
+  /** Deep ring for devices whose chat history lives on an SD card (T-Deck with a
+   *  card, Tanmatsu SD_MMC): 10x the internal-flash ring. Chosen at begin() into
+   *  _ui_msg_cap; PSRAM cost ~5000 * sizeof(UIMessage) ≈ 1.3 MB (of 8 MB). */
+  static const int MAX_UI_MESSAGES_SD = 5000;
   static const int MAX_UI_THREADS = 48;
   static const int MAX_THREAD_NAME = 32;
   static const int MAX_SENDER_NAME = 24;
@@ -130,6 +134,10 @@ private:
   int _msgcount;
   int _ui_msg_count;
   int _ui_msg_head;
+  /** Runtime ring capacity: MAX_UI_MESSAGES_SD when history lives on an SD card,
+   *  else MAX_UI_MESSAGES. Fixed for the whole boot (chosen before the PSRAM
+   *  alloc in begin()); the loader linearizes files written under another cap. */
+  int _ui_msg_cap = MAX_UI_MESSAGES;
   unsigned long _next_thread_seed;
   UIMessage* _ui_msgs   = nullptr;   // ring of recent messages — PSRAM-allocated in begin()
   UIThread*  _ui_threads = nullptr;  // thread table — PSRAM-allocated in begin()
@@ -315,6 +323,16 @@ public:
     return _ui_threads[_active_thread_idx].mesh_channel_slot;
   }
   int  activeThreadIdx() const { return _active_thread_idx; }
+  /** Any thread's pinned mesh-channel slot (-1 when not a channel / out of range).
+   *  chatDeleteApply prefers this (name-validated) over a pure name scan so
+   *  deleting a channel actually drops its mesh-table entry — otherwise
+   *  refreshThreadsFromMesh() recreates the thread from the surviving channel. */
+  int16_t threadMeshChannelSlot(int idx) const {
+    if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_threads[idx].channel) return -1;
+    return _ui_threads[idx].mesh_channel_slot;
+  }
+  /** Message-ring capacity this boot (500, or 5000 with SD-backed history). */
+  int  msgCap() const { return _ui_msg_cap; }
   /** DM thread's full contact pubkey (32 B) — for the chat sheet's "Reset path".
    *  False for channels, unused slots, or a thread with no pubkey mapping yet. */
   bool getThreadContactPub(int idx, uint8_t out[32]) const {
@@ -324,6 +342,27 @@ public:
     uint8_t any = 0;
     for (int i = 0; i < 32; i++) { out[i] = p[i]; any |= p[i]; }
     return any != 0;
+  }
+  /** Newest message of a thread (chat-list preview): scans the ring by the
+   *  thread's name + kind and returns the latest by timestamp. False when the
+   *  thread has no messages in the ring. */
+  bool getThreadLastMessage(int idx, char* sender, size_t sender_cap,
+                            char* text, size_t text_cap, bool* outgoing) const {
+    if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_msgs) return false;
+    const bool ch  = _ui_threads[idx].channel;
+    const char* nm = _ui_threads[idx].name;
+    int best = -1; uint32_t best_ts = 0;
+    for (int i = 0; i < _ui_msg_cap; ++i) {
+      const UIMessage& m = _ui_msgs[i];
+      if (!m.text[0] || m.channel != ch) continue;
+      if (strncmp(m.thread, nm, MAX_THREAD_NAME) != 0) continue;
+      if (best < 0 || m.ts >= best_ts) { best = i; best_ts = m.ts; }   // >= : a later slot wins ts ties (newer in the ring)
+    }
+    if (best < 0) return false;
+    if (sender && sender_cap) { strncpy(sender, _ui_msgs[best].sender, sender_cap - 1); sender[sender_cap - 1] = '\0'; }
+    if (text && text_cap)     { strncpy(text,   _ui_msgs[best].text,   text_cap - 1);   text[text_cap - 1] = '\0'; }
+    if (outgoing) *outgoing = _ui_msgs[best].outgoing;
+    return true;
   }
   int  threadScroll() const { return _thread_scroll; }
   void setThreadScroll(int v) { _thread_scroll = v; }
@@ -466,6 +505,7 @@ public:
   void onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) override;
   void onTelemetryReply(const ContactInfo& contact, const uint8_t* data, size_t len) override;
   void onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) override;
+  void onServerClock(const ContactInfo& contact, uint32_t server_epoch) override;
   void onAdminCommandReply(const ContactInfo& contact, const char* text) override;
   void onThreadsChanged() override;
   void loop() override;
